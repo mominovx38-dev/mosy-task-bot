@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 from datetime import datetime
@@ -9,7 +10,6 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
-    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -29,8 +29,10 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-DEFAULT_ADMIN_ID = 9020389495
+DEFAULT_ADMIN_ID = 7798667020
+DEFAULT_BOT_TOKEN = "9053563311:AAEqtJpOU7Mi_tZMox2NDRLnxLUSUyyWLmM"
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", DEFAULT_BOT_TOKEN).strip() or DEFAULT_BOT_TOKEN
 
 raw_admins = os.getenv("ADMIN_IDS", str(DEFAULT_ADMIN_ID)).strip()
 ADMIN_IDS = {
@@ -42,9 +44,6 @@ ADMIN_IDS.add(DEFAULT_ADMIN_ID)
 
 DB_PATH = os.getenv("DB_PATH", "mosy_tasks.db").strip()
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mosy-task-bot-1.onrender.com").strip().rstrip("/")
-
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN topilmadi. Environment sozlamalarini tekshiring.")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -172,7 +171,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             )
             await db.commit()
             await message.answer(
-                "✅ <b>Admin huquqi faollashtirildi!</b>\n"
+                f"✅ <b>Admin huquqi faollashtirildi!</b> (ID: <code>{user_id}</code>)\n"
                 "Pastdagi <b>📱 Boshqaruv Paneli</b> tugmasini bosib topshiriq bering va monitoring qiling.",
                 parse_mode="HTML",
                 reply_markup=main_reply_kb(),
@@ -532,7 +531,7 @@ async def monitor_tasks_job() -> None:
         cur = await db.execute(
             """
             SELECT ta.id, ta.user_id, ta.status, ta.read_at, ta.last_reminded_at, ta.called_10m,
-                   t.title, t.deadline, t.call_message, u.full_name, u.mfy
+                   t.title, t.deadline, t.call_message, t.created_at, u.full_name, u.mfy
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             JOIN users u ON u.user_id = ta.user_id
@@ -543,47 +542,37 @@ async def monitor_tasks_job() -> None:
         now_dt = datetime.now()
 
         for row in rows:
-            a_id, u_id, status, read_at_s, last_rem_s, called_10m, title, deadline, call_msg, full_name, mfy = row
+            a_id, u_id, status, read_at_s, last_rem_s, called_10m, title, deadline, call_msg, t_created_s, full_name, mfy = row
 
-            # 10 daqiqada o'qilmagan topshiriq nazorati (keyingi bosqichda haqiqiy qo'ng'iroqqa ulanadi)
-            if not read_at_s and not called_10m:
+            if not read_at_s and not called_10m and t_created_s:
                 try:
-                    created_dt = datetime.strptime(t_created := now_str(), "%Y-%m-%d %H:%M")
-                    _ = created_dt
-                except Exception:
-                    pass
-                cur_t = await db.execute("SELECT created_at FROM tasks WHERE id = (SELECT task_id FROM task_assignments WHERE id=?)", (a_id,))
-                t_row = await cur_t.fetchone()
-                if t_row:
-                    try:
-                        created_dt = datetime.strptime(t_row[0], "%Y-%m-%d %H:%M")
-                        if (now_dt - created_dt).total_seconds() >= 600:
-                            await db.execute("UPDATE task_assignments SET called_10m = 1 WHERE id = ?", (a_id,))
-                            await db.commit()
-                            spoken = call_msg or f"{full_name}, sizga «{title}» topshirig‘i yuborilgan, hali o‘qilmadi!"
+                    created_dt = datetime.strptime(t_created_s, "%Y-%m-%d %H:%M")
+                    if (now_dt - created_dt).total_seconds() >= 600:
+                        await db.execute("UPDATE task_assignments SET called_10m = 1 WHERE id = ?", (a_id,))
+                        await db.commit()
+                        spoken = call_msg or f"{full_name}, sizga «{title}» topshirig‘i yuborilgan, hali o‘qilmadi!"
+                        try:
+                            await bot.send_message(
+                                u_id,
+                                f"📞 <b>10 daqiqalik shoshilinch ogohlantirish!</b>\n"
+                                f"Topshiriq: <b>{title}</b>\n"
+                                f"Ovozli xabar matni: <i>{spoken}</i>",
+                                parse_mode="HTML",
+                            )
+                        except Exception:
+                            pass
+                        for adm_id in ADMIN_IDS:
                             try:
                                 await bot.send_message(
-                                    u_id,
-                                    f"📞 <b>10 daqiqalik shoshilinch ogohlantirish!</b>\n"
-                                    f"Topshiriq: <b>{title}</b>\n"
-                                    f"Ovozli xabar matni: <i>{spoken}</i>",
+                                    adm_id,
+                                    f"⚠️ <b>10 daqiqada o‘qilmadi:</b> {full_name} ({mfy}) — «{title}».",
                                     parse_mode="HTML",
                                 )
                             except Exception:
                                 pass
-                            for adm_id in ADMIN_IDS:
-                                try:
-                                    await bot.send_message(
-                                        adm_id,
-                                        f"⚠️ <b>10 daqiqada o‘qilmadi:</b> {full_name} ({mfy}) — «{title}».",
-                                        parse_mode="HTML",
-                                    )
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
-            # Har 1 soatda bajarilmagan topshiriqni eslatish
             should_remind = False
             if not last_rem_s:
                 should_remind = True
@@ -647,7 +636,6 @@ async def on_startup() -> None:
         await bot.delete_webhook(drop_pending_updates=False)
     except Exception:
         pass
-    import asyncio
     asyncio.create_task(dp.start_polling(bot, handle_signals=False))
 
 

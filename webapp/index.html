@@ -92,7 +92,7 @@
     <div class="badge-ring">MOSY</div>
     <div>
       <div class="header-title">YOSHLAR ISHLARI AGENTLIGI</div>
-      <div class="header-sub" id="role-subtitle">ADMIN PANEL • TOPSHIRIQLAR VA MONITORING</div>
+      <div class="header-sub" id="role-subtitle">ADMIN PANEL • ID: 7798667020</div>
     </div>
   </div>
 
@@ -175,7 +175,7 @@
   </div>
 
   <script>
-    const ADMIN_ID_CONST = 9020389495;
+    const ADMIN_ID_CONST = 7798667020;
     const tg = window.Telegram?.WebApp;
     if (tg) {
       tg.ready();
@@ -186,13 +186,9 @@
     let tgUserId =
       tg?.initDataUnsafe?.user?.id ||
       Number(urlParams.get("user_id") || 0) ||
-      Number(localStorage.getItem("mosy_tg_user_id") || 0);
+      ADMIN_ID_CONST;
 
-    if (!tgUserId) {
-      tgUserId = ADMIN_ID_CONST;
-    }
     localStorage.setItem("mosy_tg_user_id", String(tgUserId));
-
     let isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
 
     function notify(msg) {
