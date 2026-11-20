@@ -19,7 +19,10 @@
       --muted: #94a3b8;
       --border: rgba(255, 255, 255, 0.09);
     }
-    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    * {
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
     body {
       margin: 0;
       padding: 16px 14px 92px 14px;
@@ -28,63 +31,169 @@
       min-height: 100vh;
     }
     .header {
-      display: flex; align-items: center; gap: 12px;
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 18px; padding: 12px 14px; margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
     }
     .badge-ring {
-      width: 48px; height: 48px; border-radius: 50%;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
       background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: 15px; color: #051024; flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 15px;
+      color: #051024;
+      flex-shrink: 0;
     }
-    .header-title { font-size: 13px; font-weight: 800; letter-spacing: 0.4px; }
-    .header-sub { font-size: 11px; color: var(--accent); font-weight: 700; margin-top: 2px; }
-    .section { display: none; }
-    .section.active { display: block; }
+    .header-title {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+    }
+    .header-sub {
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .section {
+      display: none;
+    }
+    .section.active {
+      display: block;
+    }
     .card {
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 16px; padding: 14px; margin-bottom: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 12px;
     }
-    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
     input, textarea, select {
-      width: 100%; background: var(--card-2); border: 1px solid var(--border);
-      color: var(--text); border-radius: 12px; padding: 10px 12px;
-      font-size: 14px; margin-bottom: 12px; outline: none;
+      width: 100%;
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      margin-bottom: 12px;
+      outline: none;
     }
-    textarea { min-height: 74px; resize: vertical; }
+    textarea {
+      min-height: 74px;
+      resize: vertical;
+    }
     .btn {
-      width: 100%; border: none; border-radius: 13px; padding: 12px 14px;
-      font-size: 14px; font-weight: 700; cursor: pointer; color: #fff;
+      width: 100%;
+      border: none;
+      border-radius: 13px;
+      padding: 12px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #fff;
       background: linear-gradient(135deg, var(--accent-2), var(--accent));
     }
-    .btn-sm { padding: 7px 10px; font-size: 12px; width: auto; border-radius: 10px; }
-    .btn-success { background: var(--success); }
-    .worker-item {
-      display: flex; align-items: center; justify-content: space-between;
-      background: var(--card-2); padding: 9px 12px; border-radius: 11px; margin-bottom: 7px;
+    .btn-sm {
+      padding: 7px 10px;
+      font-size: 12px;
+      width: auto;
+      border-radius: 10px;
     }
-    .worker-item input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
-    .pill { display: inline-block; padding: 3px 8px; border-radius: 8px; font-size: 11px; font-weight: 700; }
-    .pill-ok { background: rgba(16,185,129,0.2); color: #34d399; }
-    .pill-bad { background: rgba(239,68,68,0.2); color: #f87171; }
-    .pill-warn { background: rgba(245,158,11,0.2); color: #fbbf24; }
+    .btn-success {
+      background: var(--success);
+    }
+    .worker-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-2);
+      padding: 9px 12px;
+      border-radius: 11px;
+      margin-bottom: 7px;
+    }
+    .worker-item input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .pill-ok {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+    }
+    .pill-bad {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+    }
+    .pill-warn {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+    }
     .bottom-nav {
-      position: fixed; bottom: 0; left: 0; right: 0;
-      background: rgba(9, 17, 34, 0.96); backdrop-filter: blur(12px);
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(9, 17, 34, 0.96);
+      backdrop-filter: blur(12px);
       border-top: 1px solid var(--border);
-      display: flex; justify-content: space-around; padding: 8px 6px; z-index: 99;
+      display: flex;
+      justify-content: space-around;
+      padding: 8px 6px;
+      z-index: 99;
     }
     .nav-btn {
-      background: none; border: none; color: var(--muted);
-      display: flex; flex-direction: column; align-items: center;
-      font-size: 10px; font-weight: 600; cursor: pointer; gap: 3px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      gap: 3px;
     }
-    .nav-btn.active { color: var(--accent); }
-    .nav-btn span.ico { font-size: 18px; }
+    .nav-btn.visible {
+      display: flex;
+    }
+    .nav-btn.active {
+      color: var(--accent);
+    }
+    .nav-btn span.ico {
+      font-size: 18px;
+    }
     .date-group-title {
-      font-size: 12px; font-weight: 800; color: var(--accent);
-      margin: 12px 0 6px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--accent);
+      margin: 12px 0 6px 0;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
     }
   </style>
 </head>
@@ -93,7 +202,7 @@
     <div class="badge-ring">MOSY</div>
     <div>
       <div class="header-title">YOSHLAR ISHLARI AGENTLIGI</div>
-      <div class="header-sub" id="role-subtitle">MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI</div>
+      <div class="header-sub" id="role-subtitle">Yuklanmoqda...</div>
     </div>
   </div>
 
@@ -161,36 +270,64 @@
   </div>
 
   <div class="bottom-nav">
-    <button class="nav-btn admin-only" type="button" onclick="switchTab('create', this)">
+    <button id="btn-create" class="nav-btn admin-only" type="button" onclick="switchTab('create', this)">
       <span class="ico">➕</span><span>Berish</span>
     </button>
-    <button class="nav-btn admin-only" type="button" onclick="switchTab('monitoring', this)">
+    <button id="btn-monitoring" class="nav-btn admin-only" type="button" onclick="switchTab('monitoring', this)">
       <span class="ico">📊</span><span>Monitoring</span>
     </button>
-    <button class="nav-btn worker-only" type="button" onclick="switchTab('my-tasks', this)">
+    <button id="btn-my-tasks" class="nav-btn worker-only" type="button" onclick="switchTab('my-tasks', this)">
       <span class="ico">📋</span><span>Topshiriq</span>
     </button>
-    <button class="nav-btn" type="button" onclick="switchTab('rejected', this)">
+    <button id="btn-rejected" class="nav-btn visible" type="button" onclick="switchTab('rejected', this)">
       <span class="ico">♻️</span><span>Rad etilgan</span>
     </button>
   </div>
 
   <script>
     const tg = window.Telegram?.WebApp;
-    if (tg) { tg.ready(); tg.expand(); }
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
 
     const urlParams = new URLSearchParams(window.location.search);
-    const tgUserId = tg?.initDataUnsafe?.user?.id || Number(urlParams.get("user_id") || 0);
+    let tgUserId =
+      tg?.initDataUnsafe?.user?.id ||
+      Number(urlParams.get("user_id") || 0) ||
+      Number(localStorage.getItem("mosy_tg_user_id") || 0);
+
+    if (tgUserId) {
+      localStorage.setItem("mosy_tg_user_id", String(tgUserId));
+    }
+
     let isAdmin = false;
 
     function notify(msg) {
-      if (tg && tg.showAlert) tg.showAlert(msg);
-      else alert(msg);
+      if (tg && tg.showAlert) {
+        tg.showAlert(msg);
+      } else {
+        alert(msg);
+      }
     }
 
     async function initApp() {
+      if (!tgUserId && tg?.initData) {
+        try {
+          const params = new URLSearchParams(tg.initData);
+          const userStr = params.get("user");
+          if (userStr) {
+            const u = JSON.parse(userStr);
+            if (u?.id) {
+              tgUserId = Number(u.id);
+              localStorage.setItem("mosy_tg_user_id", String(tgUserId));
+            }
+          }
+        } catch (e) {}
+      }
+
       try {
-        const res = await fetch(`/api/me?user_id=${tgUserId}`);
+        const res = await fetch(`/api/me?user_id=${tgUserId}`, { cache: "no-store" });
         const data = await res.json();
         isAdmin = Boolean(data.is_admin);
       } catch (e) {
@@ -201,14 +338,18 @@
         ? "ADMIN PANEL • TOPSHIRIQLAR VA MONITORING"
         : `IJROCHI PANEL • ID: ${tgUserId || "noma'lum"}`;
 
-      document.querySelectorAll(".admin-only").forEach(el => el.style.display = isAdmin ? "flex" : "none");
-      document.querySelectorAll(".worker-only").forEach(el => el.style.display = !isAdmin ? "flex" : "none");
+      document.querySelectorAll(".admin-only").forEach(el => {
+        el.classList.toggle("visible", isAdmin);
+      });
+      document.querySelectorAll(".worker-only").forEach(el => {
+        el.classList.toggle("visible", !isAdmin);
+      });
 
       if (isAdmin) {
         await loadWorkers();
-        switchTab("create", document.querySelector(".admin-only"));
+        switchTab("create", document.getElementById("btn-create"));
       } else {
-        switchTab("my-tasks", document.querySelector(".worker-only"));
+        switchTab("my-tasks", document.getElementById("btn-my-tasks"));
       }
     }
 
@@ -224,7 +365,7 @@
     }
 
     async function loadWorkers() {
-      const res = await fetch("/api/workers");
+      const res = await fetch("/api/workers", { cache: "no-store" });
       const list = await res.json();
       const box = document.getElementById("workers-list");
       if (!list.length) {
@@ -276,10 +417,13 @@
     }
 
     async function loadMonitoring() {
-      const res = await fetch("/api/monitoring");
+      const res = await fetch("/api/monitoring", { cache: "no-store" });
       const rows = await res.json();
       const box = document.getElementById("monitoring-box");
-      if (!rows.length) { box.innerHTML = "Hali monitoring ma’lumotlari yo‘q."; return; }
+      if (!rows.length) {
+        box.innerHTML = "Hali monitoring ma’lumotlari yo‘q.";
+        return;
+      }
       box.innerHTML = rows.map(r => {
         const badge = r.status === "approved"
           ? `<span class="pill pill-ok">Tasdiqlandi</span>`
@@ -305,10 +449,13 @@
     }
 
     async function loadMyTasks() {
-      const res = await fetch(`/api/my-tasks?user_id=${tgUserId}`);
+      const res = await fetch(`/api/my-tasks?user_id=${tgUserId}`, { cache: "no-store" });
       const list = await res.json();
       const box = document.getElementById("my-tasks-box");
-      if (!list.length) { box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q."; return; }
+      if (!list.length) {
+        box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
+        return;
+      }
       box.innerHTML = list.map(t => `
         <div class="worker-item" style="display:block;">
           <div style="display:flex; justify-content:space-between;">
@@ -332,10 +479,13 @@
 
     async function loadRejected() {
       const q = isAdmin ? "" : `?user_id=${tgUserId}`;
-      const res = await fetch(`/api/rejections${q}`);
+      const res = await fetch(`/api/rejections${q}`, { cache: "no-store" });
       const items = await res.json();
       const box = document.getElementById("rejected-box");
-      if (!items.length) { box.innerHTML = "Rad etilgan topshiriqlar mavjud emas."; return; }
+      if (!items.length) {
+        box.innerHTML = "Rad etilgan topshiriqlar mavjud emas.";
+        return;
+      }
 
       const grouped = {};
       for (const item of items) {
