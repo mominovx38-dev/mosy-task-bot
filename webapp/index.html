@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>YOSHLAR ISHLARI AGENTLIGI • MOSY</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
@@ -90,12 +91,21 @@
       margin-top: 8px; padding: 8px; border-radius: 10px;
       background: rgba(0, 210, 255, 0.08); border: 1px solid rgba(0, 210, 255, 0.22);
     }
-    .sample-box img {
-      max-width: 100%; border-radius: 8px; margin-top: 6px; display: block;
+    .sample-box img { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
+
+    body.worker-mode #sec-create,
+    body.worker-mode #sec-monitoring,
+    body.worker-mode #btn-create,
+    body.worker-mode #btn-monitoring {
+      display: none !important;
+    }
+    body.admin-mode #sec-my-tasks,
+    body.admin-mode #btn-my-tasks {
+      display: none !important;
     }
   </style>
 </head>
-<body>
+<body class="worker-mode">
   <div class="header">
     <div class="badge-ring">MOSY</div>
     <div>
@@ -133,15 +143,15 @@
         <option value="text">Faqat matn</option>
       </select>
 
-      <label>Ogohlantirish vaqtini belgilash (bajarilmasa/ko‘rilmasa)</label>
+      <label>Ogohlantirish vaqtini belgilash</label>
       <select id="t-alert">
         <option value="10m">Har 10 daqiqada</option>
         <option value="1h">Har 1 soatda</option>
         <option value="2h">Har 2 soatda</option>
       </select>
 
-      <label>Ogohlantirish/qo‘ng‘iroq matni</label>
-      <input id="t-call" placeholder="Masalan: Shoshilinch topshiriq yuborildi, iltimos ko‘rib chiqing!" />
+      <label>Ogohlantirish matni</label>
+      <input id="t-call" placeholder="Masalan: Shoshilinch topshiriq yuborildi!" />
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <label style="margin:0;">Xodimlarni tanlash</label>
@@ -164,10 +174,10 @@
     </div>
   </div>
 
-  <!-- XODIM: TOPSHIRIQLAR -->
+  <!-- WORKER: YANGI TOPSHIRIQLAR -->
   <div id="sec-my-tasks" class="section">
     <div class="card">
-      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Topshiriqlar</strong>
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Yangi topshiriqlar</strong>
       <div id="my-tasks-box">Yuklanmoqda...</div>
     </div>
   </div>
@@ -181,21 +191,23 @@
   </div>
 
   <div class="bottom-nav">
-    <button id="btn-create" class="nav-btn admin-only" type="button" onclick="switchTab('create', this)">
+    <button id="btn-create" class="nav-btn" type="button" onclick="switchTab('create', this)">
       <span class="ico">➕</span><span>Berish</span>
     </button>
-    <button id="btn-monitoring" class="nav-btn admin-only" type="button" onclick="switchTab('monitoring', this)">
+    <button id="btn-monitoring" class="nav-btn" type="button" onclick="switchTab('monitoring', this)">
       <span class="ico">📊</span><span>Monitoring</span>
     </button>
-    <button id="btn-my-tasks" class="nav-btn worker-only" type="button" onclick="switchTab('my-tasks', this)">
-      <span class="ico">📋</span><span>Topshiriqlar</span>
+    <button id="btn-my-tasks" class="nav-btn" type="button" onclick="switchTab('my-tasks', this)">
+      <span class="ico">📋</span><span>Yangi topshiriqlar</span>
     </button>
     <button id="btn-rejected" class="nav-btn visible" type="button" onclick="switchTab('rejected', this)">
-      <span class="ico">♻️</span><span>Rad etilgan</span>
+      <span class="ico">♻️</span><span>Rad etilgan topshiriqlar</span>
     </button>
   </div>
 
   <script>
+    try { localStorage.clear(); } catch (e) {}
+
     const ADMIN_ID_CONST = 7798667020;
     const tg = window.Telegram?.WebApp;
     if (tg) {
@@ -207,28 +219,24 @@
     const forcedRole = (urlParams.get("role") || "").toLowerCase();
     const forcedTab = urlParams.get("tab") || "";
 
-    function detectTelegramUserId() {
-      const fromUnsafe = tg?.initDataUnsafe?.user?.id;
-      if (fromUnsafe) return Number(fromUnsafe);
+    function getRealTelegramId() {
+      const fromUnsafe = Number(tg?.initDataUnsafe?.user?.id || 0);
+      if (fromUnsafe) return fromUnsafe;
 
       if (tg?.initData) {
         try {
-          const params = new URLSearchParams(tg.initData);
-          const userStr = params.get("user");
-          if (userStr) {
-            const u = JSON.parse(userStr);
+          const p = new URLSearchParams(tg.initData);
+          const uStr = p.get("user");
+          if (uStr) {
+            const u = JSON.parse(uStr);
             if (u?.id) return Number(u.id);
           }
         } catch (e) {}
       }
-
-      const fromQuery = Number(urlParams.get("user_id") || 0);
-      if (fromQuery) return fromQuery;
-
       return 0;
     }
 
-    let tgUserId = detectTelegramUserId();
+    let tgUserId = getRealTelegramId();
     let isAdmin = false;
 
     function notify(msg) {
@@ -236,56 +244,55 @@
       else alert(msg);
     }
 
-    function applyRoleUI() {
-      document.getElementById("role-subtitle").textContent = isAdmin
-        ? `BOSHQARUV PANELI (ADMIN) • ID: ${tgUserId}`
-        : `XODIM OYNASI • ID: ${tgUserId || "noma'lum"}`;
-
-      document.querySelectorAll(".admin-only").forEach(el => {
-        el.classList.toggle("visible", isAdmin);
-      });
-      document.querySelectorAll(".worker-only").forEach(el => {
-        el.classList.toggle("visible", !isAdmin);
-      });
+    function applyMode() {
+      if (isAdmin) {
+        document.body.classList.remove("worker-mode");
+        document.body.classList.add("admin-mode");
+        document.getElementById("role-subtitle").textContent = `ADMIN • ID: ${tgUserId}`;
+        document.getElementById("btn-create").classList.add("visible");
+        document.getElementById("btn-monitoring").classList.add("visible");
+        document.getElementById("btn-my-tasks").classList.remove("visible");
+      } else {
+        document.body.classList.remove("admin-mode");
+        document.body.classList.add("worker-mode");
+        document.getElementById("role-subtitle").textContent = `XODIM • ID: ${tgUserId || "noma'lum"}`;
+        document.getElementById("btn-create").classList.remove("visible");
+        document.getElementById("btn-monitoring").classList.remove("visible");
+        document.getElementById("btn-my-tasks").classList.add("visible");
+      }
     }
 
     async function initApp() {
-      tgUserId = detectTelegramUserId();
-      isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
+      tgUserId = getRealTelegramId();
+      isAdmin = (tgUserId === ADMIN_ID_CONST) && (forcedRole !== "worker");
 
-      if (tgUserId) {
+      if (tgUserId && !isAdmin) {
         try {
           const res = await fetch(`/api/me?user_id=${tgUserId}`, { cache: "no-store" });
           const data = await res.json();
-          isAdmin = Boolean(data.is_admin) && (Number(tgUserId) === ADMIN_ID_CONST);
+          isAdmin = Boolean(data.is_admin) && (tgUserId === ADMIN_ID_CONST) && (forcedRole !== "worker");
         } catch (e) {
-          isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
+          isAdmin = false;
         }
-      } else {
-        isAdmin = false;
       }
 
-      if (forcedRole === "worker") {
-        isAdmin = false;
-      }
-
-      applyRoleUI();
+      applyMode();
 
       if (isAdmin) {
         await loadWorkers();
-        const targetTab = (forcedTab === "monitoring" || forcedTab === "rejected") ? forcedTab : "create";
+        const startTab = (forcedTab === "monitoring" || forcedTab === "rejected") ? forcedTab : "create";
         const btnMap = {
           "create": document.getElementById("btn-create"),
           "monitoring": document.getElementById("btn-monitoring"),
           "rejected": document.getElementById("btn-rejected")
         };
-        switchTab(targetTab, btnMap[targetTab]);
+        switchTab(startTab, btnMap[startTab]);
       } else {
-        const targetTab = (forcedTab === "rejected") ? "rejected" : "my-tasks";
-        const btnEl = targetTab === "rejected"
+        const startTab = (forcedTab === "rejected") ? "rejected" : "my-tasks";
+        const btnEl = startTab === "rejected"
           ? document.getElementById("btn-rejected")
           : document.getElementById("btn-my-tasks");
-        switchTab(targetTab, btnEl);
+        switchTab(startTab, btnEl);
       }
     }
 
@@ -305,11 +312,12 @@
     }
 
     async function loadWorkers() {
+      if (!isAdmin) return;
       const res = await fetch("/api/workers", { cache: "no-store" });
       const list = await res.json();
       const box = document.getElementById("workers-list");
       if (!list.length) {
-        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali xodimlar ro‘yxatdan o‘tmagan. Xodimlar botga kirib /start bosishi kerak.</div>`;
+        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali xodimlar ro‘yxatdan o‘tmagan.</div>`;
         return;
       }
       box.innerHTML = list.map(w => `
@@ -327,10 +335,7 @@
     }
 
     async function sendTask() {
-      if (!isAdmin) {
-        notify("Faqat admin topshiriq bera oladi!");
-        return;
-      }
+      if (!isAdmin) return;
       const selected = [...document.querySelectorAll(".w-check:checked")].map(b => Number(b.value));
       const title = document.getElementById("t-title").value.trim();
       const description = document.getElementById("t-desc").value.trim();
@@ -368,7 +373,7 @@
       const res = await fetch("/api/tasks", { method: "POST", body: fd });
       const out = await res.json();
       if (out.ok) {
-        notify("✅ Topshiriq tanlangan xodimlarga yuborildi!");
+        notify("✅ Topshiriq yuborildi!");
         document.getElementById("t-title").value = "";
         document.getElementById("t-desc").value = "";
         document.getElementById("t-instr").value = "";
@@ -440,7 +445,7 @@
       const list = await res.json();
       const box = document.getElementById("my-tasks-box");
       if (!list.length) {
-        box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
+        box.innerHTML = "Sizga biriktirilgan yangi topshiriqlar yo‘q.";
         return;
       }
       box.innerHTML = list.map(t => `
@@ -454,13 +459,13 @@
           <div style="font-size:11px; color:var(--accent); margin-top:4px;">Muddat: ${t.deadline} | Format: ${t.answer_type}</div>
           ${t.has_sample_photo ? `
             <div class="sample-box">
-              <div style="font-size:11px; color:var(--accent); font-weight:700;">🖼 Namuna rasm (shu ko‘rinishda bo‘lsin):</div>
+              <div style="font-size:11px; color:var(--accent); font-weight:700;">🖼 Namuna rasm:</div>
               <img src="/api/files/sample/${t.task_id}" alt="Namuna rasm" />
             </div>
           ` : ""}
           ${t.has_task_file && t.task_file_name ? `
             <div style="margin-top:6px;">
-              <a class="file-link" href="/api/files/task/${t.task_id}" target="_blank">📎 Biriktirilgan faylni yuklash (${t.task_file_name})</a>
+              <a class="file-link" href="/api/files/task/${t.task_id}" target="_blank">📎 Faylni yuklash (${t.task_file_name})</a>
             </div>
           ` : ""}
           ${t.status === 'rejected' && t.last_reason ? `
