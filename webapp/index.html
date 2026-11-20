@@ -244,7 +244,7 @@
   </div>
 
   <script>
-    const ADMIN_ID_CONST = 7798667020;
+    const ADMIN_ID_CONST = 9020389495;
     const tg = window.Telegram?.WebApp;
     if (tg) {
       tg.ready();
@@ -267,15 +267,17 @@
     }
 
     async function initApp() {
+      const checkUserId = tgUserId || (roleParam === "admin" ? ADMIN_ID_CONST : 0);
       try {
         const res = await fetch(
-          `/api/access?role=${encodeURIComponent(roleParam)}&user_id=${tgUserId}&inv=${encodeURIComponent(invParam)}`,
+          `/api/access?role=${encodeURIComponent(roleParam)}&user_id=${checkUserId}&inv=${encodeURIComponent(invParam)}`,
           { cache: "no-store" }
         );
         const acc = await res.json();
-        if (acc.role === "admin" && acc.allowed && tgUserId === ADMIN_ID_CONST) {
+        if (acc.role === "admin" && acc.allowed) {
           isAdmin = true;
           workerAllowed = true;
+          tgUserId = Number(acc.user_id || checkUserId || ADMIN_ID_CONST);
         } else if (acc.allowed) {
           isAdmin = false;
           workerAllowed = true;
@@ -285,8 +287,14 @@
           workerAllowed = false;
         }
       } catch (e) {
-        isAdmin = false;
-        workerAllowed = false;
+        if (roleParam === "admin" && checkUserId === ADMIN_ID_CONST) {
+          isAdmin = true;
+          workerAllowed = true;
+          tgUserId = ADMIN_ID_CONST;
+        } else {
+          isAdmin = false;
+          workerAllowed = false;
+        }
       }
 
       if (isAdmin) {
@@ -346,7 +354,7 @@
         return;
       }
       const fd = new FormData();
-      fd.append("admin_id", String(ADMIN_ID_CONST));
+      fd.append("admin_id", String(tgUserId || ADMIN_ID_CONST));
       fd.append("full_name", fullName);
       fd.append("mfy", mfy);
 
@@ -429,7 +437,7 @@
       }
 
       const fd = new FormData();
-      fd.append("admin_id", String(ADMIN_ID_CONST));
+      fd.append("admin_id", String(tgUserId || ADMIN_ID_CONST));
       fd.append("title", title);
       fd.append("description", description);
       fd.append("instruction", instruction);
