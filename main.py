@@ -3,7 +3,7 @@ import io
 import os
 import re
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, Router
@@ -47,6 +47,12 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mosy-task-bot-1.onrender.com").str
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads").strip()
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+ALERT_SECONDS_MAP = {
+    "10m": 600,
+    "1h": 3600,
+    "2h": 7200,
+}
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
@@ -83,14 +89,32 @@ def safe_filename(name: str) -> str:
     return cleaned or "file.bin"
 
 
-def main_reply_kb() -> ReplyKeyboardMarkup:
+def admin_reply_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
                 KeyboardButton(
                     text="📱 Boshqaruv Paneli",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/"),
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?role=admin&user_id={DEFAULT_ADMIN_ID}"),
                 )
+            ]
+        ],
+        resize_keyboard=True,
+    )
+
+
+def worker_reply_kb(user_id: int) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="📋 Topshiriqlar",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?role=worker&tab=my-tasks&user_id={user_id}"),
+                ),
+                KeyboardButton(
+                    text="♻️ Rad etilgan topshiriqlar",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?role=worker&tab=rejected&user_id={user_id}"),
+                ),
             ]
         ],
         resize_keyboard=True,
@@ -119,7 +143,10 @@ async def init_db() -> None:
                 instruction TEXT DEFAULT '',
                 deadline TEXT NOT NULL,
                 answer_type TEXT NOT NULL DEFAULT 'photo',
+                alert_interval TEXT NOT NULL DEFAULT '10m',
                 call_message TEXT DEFAULT '',
+                sample_photo_name TEXT,
+                sample_photo_path TEXT,
                 task_file_name TEXT,
                 task_file_path TEXT,
                 created_at TEXT NOT NULL
@@ -135,8 +162,8 @@ async def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'assigned',
                 read_at TEXT,
                 submitted_at TEXT,
-                last_reminded_at TEXT,
-                called_10m INTEGER NOT NULL DEFAULT 0,
+                last_alerted_at TEXT,
+                alert_count INTEGER NOT NULL DEFAULT 0,
                 answer_text TEXT,
                 file_id TEXT,
                 file_name TEXT,
@@ -161,11 +188,15 @@ async def init_db() -> None:
             )
             """
         )
-        # Mavjud jadvalga yangi ustunlar bo'lmasa xavfsiz qo'shish
         for col_sql in [
+            "ALTER TABLE tasks ADD COLUMN alert_interval TEXT NOT NULL DEFAULT '10m'",
+            "ALTER TABLE tasks ADD COLUMN sample_photo_name TEXT",
+            "ALTER TABLE tasks ADD COLUMN sample_photo_path TEXT",
             "ALTER TABLE tasks ADD COLUMN task_file_name TEXT",
             "ALTER TABLE tasks ADD COLUMN task_file_path TEXT",
             "ALTER TABLE task_assignments ADD COLUMN file_path TEXT",
+            "ALTER TABLE task_assignments ADD COLUMN last_alerted_at TEXT",
+            "ALTER TABLE task_assignments ADD COLUMN alert_count INTEGER NOT NULL DEFAULT 0",
         ]:
             try:
                 await db.execute(col_sql)
@@ -194,7 +225,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
                 f"✅ <b>Admin huquqi faollashtirildi!</b> (ID: <code>{user_id}</code>)\n"
                 "Pastdagi <b>📱 Boshqaruv Paneli</b> tugmasini bosib topshiriq bering va monitoring qiling.",
                 parse_mode="HTML",
-                reply_markup=main_reply_kb(),
+                reply_markup=admin_reply_kb(),
             )
             return
 
@@ -204,9 +235,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if row:
         await message.answer(
             f"👋 Xush kelibsiz, <b>{row[0]}</b> ({row[1]})!\n"
-            "Vazifalarni ko‘rish va javob yuklash uchun pastdagi <b>📱 Boshqaruv Paneli</b> tugmasini bosing.",
+            "Pastdagi <b>📋 Topshiriqlar</b> yoki <b>♻️ Rad etilgan topshiriqlar</b> tugmalaridan foydalaning.",
             parse_mode="HTML",
-            reply_markup=main_reply_kb(),
+            reply_markup=worker_reply_kb(user_id),
         )
     else:
         await message.answer(
@@ -219,7 +250,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(RegStates.waiting_name)
 async def reg_name(message: Message, state: FSMContext) -> None:
     full_name = (message.text or "").strip()
-    if len(full_name) < 3:
+    if len(full_name) < 3 or full_name.startswith("/"):
         await message.answer("Iltimos, to‘liq ism-familiyangizni kiriting:")
         return
     await state.update_data(full_name=full_name)
@@ -230,7 +261,7 @@ async def reg_name(message: Message, state: FSMContext) -> None:
 @router.message(RegStates.waiting_mfy)
 async def reg_mfy(message: Message, state: FSMContext) -> None:
     mfy = (message.text or "").strip()
-    if len(mfy) < 2:
+    if len(mfy) < 2 or mfy.startswith("/"):
         await message.answer("Iltimos, MFY nomini kiriting:")
         return
     data = await state.get_data()
@@ -250,11 +281,11 @@ async def reg_mfy(message: Message, state: FSMContext) -> None:
         await db.commit()
 
     await state.clear()
+    kb = admin_reply_kb() if is_admin_user(user_id) else worker_reply_kb(user_id)
     await message.answer(
-        f"✅ Ro‘yxatdan o‘tdingiz: <b>{full_name}</b> ({mfy}).\n"
-        "Endi <b>📱 Boshqaruv Paneli</b> tugmasidan foydalanishingiz mumkin.",
+        f"✅ Ro‘yxatdan o‘tdingiz: <b>{full_name}</b> ({mfy}).",
         parse_mode="HTML",
-        reply_markup=main_reply_kb(),
+        reply_markup=kb,
     )
 
 
@@ -264,7 +295,8 @@ async def cb_read_task(callback: CallbackQuery) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT ta.id, ta.status, ta.read_at, t.title, t.description, t.instruction, t.deadline, t.answer_type
+            SELECT ta.id, ta.status, ta.read_at, t.title, t.description, t.instruction,
+                   t.deadline, t.answer_type, t.sample_photo_name, t.sample_photo_path
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             WHERE ta.id = ?
@@ -289,20 +321,31 @@ async def cb_read_task(callback: CallbackQuery) -> None:
         "both": "Rasm va fayl",
         "text": "Faqat matn",
     }
-    await callback.message.answer(
+    text_msg = (
         f"📌 <b>{row[3]}</b>\n\n"
         f"📝 <b>Mazmuni:</b> {row[4]}\n"
-        f"🛠 <b>Bajarish tartibi:</b> {row[5] or 'Ko‘rsatilmagan'}\n"
+        f"🛠 <b>Izoh / Yo‘riqnoma:</b> {row[5] or 'Ko‘rsatilmagan'}\n"
         f"⏰ <b>Muddat:</b> {row[6]}\n"
-        f"📎 <b>Talab etiladigan format:</b> {type_labels.get(row[7], row[7])}\n\n"
-        "Javobni <b>📱 Boshqaruv Paneli</b> ichida yoki quyidagi tugma orqali yuboring.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="✍️ Javob yuborish", callback_data=f"ans_task:{assignment_id}")]
-            ]
-        ),
+        f"📎 <b>Javob formati:</b> {type_labels.get(row[7], row[7])}\n\n"
+        "Javob yuborish uchun quyidagi <b>✍️ Javob yuborish</b> tugmasini bosing."
     )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✍️ Javob yuborish", callback_data=f"ans_task:{assignment_id}")]
+        ]
+    )
+
+    sample_path = row[9]
+    if sample_path and os.path.exists(sample_path):
+        await callback.message.answer_photo(
+            photo=open(sample_path, "rb"),
+            caption=f"{text_msg}\n\n🖼 <i>Namuna rasm: shu ko‘rinishda bajarilsin.</i>",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    else:
+        await callback.message.answer(text_msg, parse_mode="HTML", reply_markup=kb)
+
     await callback.answer("O‘qilgan deb belgilandi.")
 
 
@@ -552,8 +595,8 @@ async def monitor_tasks_job() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT ta.id, ta.user_id, ta.status, ta.read_at, ta.last_reminded_at, ta.called_10m,
-                   t.title, t.deadline, t.call_message, t.created_at, u.full_name, u.mfy
+            SELECT ta.id, ta.user_id, ta.status, ta.read_at, ta.last_alerted_at,
+                   t.title, t.deadline, t.alert_interval, t.call_message, t.created_at, u.full_name, u.mfy
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             JOIN users u ON u.user_id = ta.user_id
@@ -564,58 +607,35 @@ async def monitor_tasks_job() -> None:
         now_dt = datetime.now()
 
         for row in rows:
-            a_id, u_id, status, read_at_s, last_rem_s, called_10m, title, deadline, call_msg, t_created_s, full_name, mfy = row
+            a_id, u_id, status, read_at_s, last_alert_s, title, deadline, alert_interval, call_msg, t_created_s, full_name, mfy = row
+            interval_sec = ALERT_SECONDS_MAP.get(alert_interval or "10m", 600)
+            label_map = {"10m": "10 daqiqa", "1h": "1 soat", "2h": "2 soat"}
+            interval_label = label_map.get(alert_interval or "10m", "10 daqiqa")
 
-            if not read_at_s and not called_10m and t_created_s:
-                try:
-                    created_dt = datetime.strptime(t_created_s, "%Y-%m-%d %H:%M")
-                    if (now_dt - created_dt).total_seconds() >= 600:
-                        await db.execute("UPDATE task_assignments SET called_10m = 1 WHERE id = ?", (a_id,))
-                        await db.commit()
-                        spoken = call_msg or f"{full_name}, sizga «{title}» topshirig‘i yuborilgan, hali o‘qilmadi!"
-                        try:
-                            await bot.send_message(
-                                u_id,
-                                f"📞 <b>10 daqiqalik shoshilinch ogohlantirish!</b>\n"
-                                f"Topshiriq: <b>{title}</b>\n"
-                                f"Ovozli xabar matni: <i>{spoken}</i>",
-                                parse_mode="HTML",
-                            )
-                        except Exception:
-                            pass
-                        for adm_id in ADMIN_IDS:
-                            try:
-                                await bot.send_message(
-                                    adm_id,
-                                    f"⚠️ <b>10 daqiqada o‘qilmadi:</b> {full_name} ({mfy}) — «{title}».",
-                                    parse_mode="HTML",
-                                )
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+            ref_time_s = last_alert_s or t_created_s
+            if not ref_time_s:
+                continue
 
-            should_remind = False
-            if not last_rem_s:
-                should_remind = True
-            else:
-                try:
-                    last_dt = datetime.strptime(last_rem_s, "%Y-%m-%d %H:%M")
-                    if (now_dt - last_dt).total_seconds() >= 3600:
-                        should_remind = True
-                except Exception:
-                    should_remind = True
+            try:
+                ref_dt = datetime.strptime(ref_time_s, "%Y-%m-%d %H:%M")
+            except Exception:
+                continue
 
-            if should_remind and status in ("assigned", "read", "rejected"):
-                await db.execute("UPDATE task_assignments SET last_reminded_at = ? WHERE id = ?", (now_str(), a_id))
+            if (now_dt - ref_dt).total_seconds() >= interval_sec:
+                await db.execute(
+                    "UPDATE task_assignments SET last_alerted_at = ?, alert_count = COALESCE(alert_count, 0) + 1 WHERE id = ?",
+                    (now_str(), a_id),
+                )
                 await db.commit()
+
+                spoken = call_msg or f"{full_name}, «{title}» topshirig‘i bo‘yicha {interval_label}lik ogohlantirish!"
                 try:
                     await bot.send_message(
                         u_id,
-                        f"⏰ <b>Eslatma (har 1 soatlik nazorat):</b>\n"
-                        f"Topshiriq: <b>{title}</b>\n"
-                        f"Muddat: <b>{deadline}</b>\n"
-                        f"Holat: <b>{status}</b>",
+                        f"⏰ <b>Ogohlantirish ({interval_label} oralig‘ida):</b>\n"
+                        f"📌 Topshiriq: <b>{title}</b>\n"
+                        f"🕒 Muddat: <b>{deadline}</b>\n"
+                        f"📢 Xabar: <i>{spoken}</i>",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(
                             inline_keyboard=[
@@ -625,6 +645,16 @@ async def monitor_tasks_job() -> None:
                     )
                 except Exception:
                     pass
+
+                for adm_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            adm_id,
+                            f"⚠️ <b>{interval_label} ogohlantirish:</b> {full_name} ({mfy}) — «{title}» (holat: {status}).",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
 
 
 app = FastAPI(title="MOSY Topshiriqlar Nazorat Markazi")
@@ -680,24 +710,41 @@ async def api_create_task(
     instruction: str = Form(default=""),
     deadline: str = Form(...),
     answer_type: str = Form(default="photo"),
+    alert_interval: str = Form(default="10m"),
     call_message: str = Form(default=""),
     user_ids_csv: str = Form(...),
+    sample_photo: Optional[UploadFile] = File(default=None),
     task_file: Optional[UploadFile] = File(default=None),
 ) -> dict:
     if not is_admin_user(admin_id):
         raise HTTPException(status_code=403, detail="Faqat admin topshiriq bera oladi.")
+
+    if alert_interval not in ALERT_SECONDS_MAP:
+        alert_interval = "10m"
 
     user_ids = [int(x.strip()) for x in user_ids_csv.split(",") if x.strip().isdigit()]
     if not user_ids:
         raise HTTPException(status_code=400, detail="Kamida 1 ta xodim tanlanishi kerak.")
 
     stamp = now_str()
+    ts_prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    sample_photo_name = None
+    sample_photo_path = None
+    if sample_photo and sample_photo.filename:
+        sname = safe_filename(sample_photo.filename)
+        spath = os.path.join(UPLOAD_DIR, f"sample_{ts_prefix}_{sname}")
+        scontent = await sample_photo.read()
+        with open(spath, "wb") as sf:
+            sf.write(scontent)
+        sample_photo_name = sname
+        sample_photo_path = spath
+
     task_file_name = None
     task_file_path = None
-
     if task_file and task_file.filename:
         fname = safe_filename(task_file.filename)
-        fpath = os.path.join(UPLOAD_DIR, f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{fname}")
+        fpath = os.path.join(UPLOAD_DIR, f"task_{ts_prefix}_{fname}")
         content = await task_file.read()
         with open(fpath, "wb") as out_f:
             out_f.write(content)
@@ -707,8 +754,12 @@ async def api_create_task(
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            INSERT INTO tasks (title, description, instruction, deadline, answer_type, call_message, task_file_name, task_file_path, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (
+                title, description, instruction, deadline, answer_type,
+                alert_interval, call_message, sample_photo_name, sample_photo_path,
+                task_file_name, task_file_path, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 title,
@@ -716,7 +767,10 @@ async def api_create_task(
                 instruction or "",
                 deadline,
                 answer_type,
+                alert_interval,
                 call_message or "",
+                sample_photo_name,
+                sample_photo_path,
                 task_file_name,
                 task_file_path,
                 stamp,
@@ -727,31 +781,39 @@ async def api_create_task(
         for uid in user_ids:
             a_cur = await db.execute(
                 """
-                INSERT INTO task_assignments (task_id, user_id, status, last_reminded_at)
+                INSERT INTO task_assignments (task_id, user_id, status, last_alerted_at)
                 VALUES (?, ?, 'assigned', ?)
                 """,
                 (task_id, uid, stamp),
             )
             assignment_id = a_cur.lastrowid
+            msg_text = (
+                f"🆕 <b>Yangi topshiriq biriktirildi!</b>\n"
+                f"📌 <b>{title}</b>\n"
+                f"📝 {description}\n"
+                f"⏰ Muddat: <b>{deadline}</b>"
+            )
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📖 O‘qish va Javob berish",
+                            callback_data=f"read_task:{assignment_id}",
+                        )
+                    ]
+                ]
+            )
             try:
-                await bot.send_message(
-                    uid,
-                    f"🆕 <b>Yangi topshiriq biriktirildi!</b>\n"
-                    f"📌 <b>{title}</b>\n"
-                    f"📝 {description}\n"
-                    f"⏰ Muddat: <b>{deadline}</b>",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="📖 O‘qish va Javob berish",
-                                    callback_data=f"read_task:{assignment_id}",
-                                )
-                            ]
-                        ]
-                    ),
-                )
+                if sample_photo_path and os.path.exists(sample_photo_path):
+                    await bot.send_photo(
+                        uid,
+                        photo=open(sample_photo_path, "rb"),
+                        caption=f"{msg_text}\n\n🖼 <i>Namuna rasm ilova qilingan.</i>",
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
+                else:
+                    await bot.send_message(uid, msg_text, parse_mode="HTML", reply_markup=kb)
             except Exception:
                 pass
 
@@ -839,7 +901,7 @@ async def api_submit_task_from_panel(
             if saved_path and os.path.exists(saved_path):
                 await bot.send_document(
                     adm_id,
-                    document=FileResponse(saved_path, filename=saved_name) if False else open(saved_path, "rb"),
+                    document=open(saved_path, "rb"),
                     caption=caption,
                     parse_mode="HTML",
                     reply_markup=admin_kb,
@@ -850,6 +912,16 @@ async def api_submit_task_from_panel(
             pass
 
     return {"ok": True, "file_name": saved_name}
+
+
+@app.get("/api/files/sample/{task_id}")
+async def api_download_sample_photo(task_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT sample_photo_name, sample_photo_path FROM tasks WHERE id = ?", (task_id,))
+        row = await cur.fetchone()
+        if not row or not row[1] or not os.path.exists(row[1]):
+            raise HTTPException(status_code=404, detail="Namuna rasm topilmadi.")
+        return FileResponse(path=row[1], filename=row[0] or "sample.jpg")
 
 
 @app.get("/api/files/task/{task_id}")
@@ -883,7 +955,8 @@ async def api_monitoring() -> list:
             """
             SELECT ta.id, ta.status, ta.read_at, ta.submitted_at, ta.answer_text,
                    ta.file_name, ta.file_path, ta.last_reason,
-                   t.id AS task_id, t.title, t.description, t.task_file_name, t.task_file_path,
+                   t.id AS task_id, t.title, t.description, t.instruction, t.alert_interval,
+                   t.sample_photo_name, t.sample_photo_path, t.task_file_name, t.task_file_path,
                    u.full_name, u.mfy
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
@@ -897,6 +970,7 @@ async def api_monitoring() -> list:
             item = dict(r)
             item["has_answer_file"] = bool(item.get("file_path") and os.path.exists(item["file_path"]))
             item["has_task_file"] = bool(item.get("task_file_path") and os.path.exists(item["task_file_path"]))
+            item["has_sample_photo"] = bool(item.get("sample_photo_path") and os.path.exists(item["sample_photo_path"]))
             result.append(item)
         return result
 
@@ -908,7 +982,8 @@ async def api_my_tasks(user_id: int = Query(default=0)) -> list:
         cur = await db.execute(
             """
             SELECT ta.id, ta.status, ta.last_reason, ta.file_name, ta.answer_text,
-                   t.id AS task_id, t.title, t.description, t.instruction, t.deadline, t.answer_type, t.task_file_name, t.task_file_path
+                   t.id AS task_id, t.title, t.description, t.instruction, t.deadline,
+                   t.answer_type, t.sample_photo_name, t.sample_photo_path, t.task_file_name, t.task_file_path
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             WHERE ta.user_id = ?
@@ -921,6 +996,7 @@ async def api_my_tasks(user_id: int = Query(default=0)) -> list:
         for r in rows:
             item = dict(r)
             item["has_task_file"] = bool(item.get("task_file_path") and os.path.exists(item["task_file_path"]))
+            item["has_sample_photo"] = bool(item.get("sample_photo_path") and os.path.exists(item["sample_photo_path"]))
             result.append(item)
         return result
 
@@ -962,13 +1038,18 @@ async def api_export_excel() -> StreamingResponse:
     wb = Workbook()
     ws = wb.active
     ws.title = "Monitoring"
-    ws.append(["ID", "Xodim", "MFY", "Topshiriq", "Topshiriq matni", "Holat", "O‘qilgan vaqt", "Topshirilgan vaqt", "Javob matni", "Fayl nomi"])
+    ws.append([
+        "ID", "Xodim", "MFY", "Topshiriq", "Topshiriq matni", "Izoh",
+        "Ogohlantirish", "Holat", "O‘qilgan vaqt", "Topshirilgan vaqt",
+        "Javob matni", "Fayl nomi"
+    ])
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT ta.id, u.full_name, u.mfy, t.title, t.description, ta.status,
-                   ta.read_at, ta.submitted_at, ta.answer_text, ta.file_name
+            SELECT ta.id, u.full_name, u.mfy, t.title, t.description, t.instruction,
+                   t.alert_interval, ta.status, ta.read_at, ta.submitted_at,
+                   ta.answer_text, ta.file_name
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             JOIN users u ON u.user_id = ta.user_id

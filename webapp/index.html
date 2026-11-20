@@ -86,6 +86,13 @@
       margin: 12px 0 6px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border);
     }
     .file-link { color: var(--accent); font-size: 12px; font-weight: 700; text-decoration: none; }
+    .sample-box {
+      margin-top: 8px; padding: 8px; border-radius: 10px;
+      background: rgba(0, 210, 255, 0.08); border: 1px solid rgba(0, 210, 255, 0.22);
+    }
+    .sample-box img {
+      max-width: 100%; border-radius: 8px; margin-top: 6px; display: block;
+    }
   </style>
 </head>
 <body>
@@ -106,8 +113,14 @@
       <label>Topshiriq mazmuni</label>
       <textarea id="t-desc" placeholder="Batafsil vazifa mazmuni..."></textarea>
 
-      <label>Qanday bajarilishi kerak? (Yo‘riqnoma)</label>
-      <textarea id="t-instr" placeholder="Qadam-baqadam bajarish tartibi..."></textarea>
+      <label>Izoh / Bajarish yo‘riqnomasi</label>
+      <textarea id="t-instr" placeholder="Masalan: Shu rasmdagidek rasmli hisobot qilib yuboring..."></textarea>
+
+      <label>Namuna rasm yuklash (ixtiyoriy — majburiy emas)</label>
+      <input id="t-sample" type="file" accept="image/*" />
+
+      <label>Ilova fayl (ixtiyoriy)</label>
+      <input id="t-file" type="file" />
 
       <label>Muddat (Deadline)</label>
       <input id="t-deadline" placeholder="Masalan: Bugun 18:00 gacha" />
@@ -120,14 +133,18 @@
         <option value="text">Faqat matn</option>
       </select>
 
-      <label>Topshiriq uchun ilova fayl (ixtiyoriy)</label>
-      <input id="t-file" type="file" />
+      <label>Ogohlantirish vaqtini belgilash (bajarilmasa/ko‘rilmasa)</label>
+      <select id="t-alert">
+        <option value="10m">Har 10 daqiqada</option>
+        <option value="1h">Har 1 soatda</option>
+        <option value="2h">Har 2 soatda</option>
+      </select>
 
-      <label>10 daqiqada ko‘rmasa qo‘ng‘iroqda o‘qiladigan matn</label>
+      <label>Ogohlantirish/qo‘ng‘iroq matni</label>
       <input id="t-call" placeholder="Masalan: Shoshilinch topshiriq yuborildi, iltimos ko‘rib chiqing!" />
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <label style="margin:0;">Ishchilarni tanlash</label>
+        <label style="margin:0;">Xodimlarni tanlash</label>
         <button class="btn btn-sm" type="button" onclick="toggleSelectAll()">☑️ Hammasini belgilash</button>
       </div>
       <div id="workers-list">Yuklanmoqda...</div>
@@ -147,18 +164,18 @@
     </div>
   </div>
 
-  <!-- ISHCHI: TOPSHIRIQLARIM VA YUKLASH -->
+  <!-- XODIM: TOPSHIRIQLAR -->
   <div id="sec-my-tasks" class="section">
     <div class="card">
-      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Mening topshiriqlarim</strong>
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Topshiriqlar</strong>
       <div id="my-tasks-box">Yuklanmoqda...</div>
     </div>
   </div>
 
-  <!-- RAD ETILGAN TOPSHIRIQLAR (KUN BO‘YICHA TARIX) -->
+  <!-- RAD ETILGAN TOPSHIRIQLAR -->
   <div id="sec-rejected" class="section">
     <div class="card">
-      <strong style="font-size:14px; display:block; margin-bottom:10px;">♻️ Rad etilgan topshiriqlar (Kunlar kesimida)</strong>
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">♻️ Rad etilgan topshiriqlar</strong>
       <div id="rejected-box">Yuklanmoqda...</div>
     </div>
   </div>
@@ -171,7 +188,7 @@
       <span class="ico">📊</span><span>Monitoring</span>
     </button>
     <button id="btn-my-tasks" class="nav-btn worker-only" type="button" onclick="switchTab('my-tasks', this)">
-      <span class="ico">📋</span><span>Topshiriq</span>
+      <span class="ico">📋</span><span>Topshiriqlar</span>
     </button>
     <button id="btn-rejected" class="nav-btn visible" type="button" onclick="switchTab('rejected', this)">
       <span class="ico">♻️</span><span>Rad etilgan</span>
@@ -185,6 +202,10 @@
       tg.ready();
       tg.expand();
     }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const forcedRole = (urlParams.get("role") || "").toLowerCase();
+    const forcedTab = urlParams.get("tab") || "";
 
     function detectTelegramUserId() {
       const fromUnsafe = tg?.initDataUnsafe?.user?.id;
@@ -201,7 +222,6 @@
         } catch (e) {}
       }
 
-      const urlParams = new URLSearchParams(window.location.search);
       const fromQuery = Number(urlParams.get("user_id") || 0);
       if (fromQuery) return fromQuery;
 
@@ -218,8 +238,8 @@
 
     function applyRoleUI() {
       document.getElementById("role-subtitle").textContent = isAdmin
-        ? `ADMIN PANEL • ID: ${tgUserId}`
-        : `ISHCHI PANELI • ID: ${tgUserId || "aniqlanmoqda"}`;
+        ? `BOSHQARUV PANELI (ADMIN) • ID: ${tgUserId}`
+        : `XODIM OYNASI • ID: ${tgUserId || "noma'lum"}`;
 
       document.querySelectorAll(".admin-only").forEach(el => {
         el.classList.toggle("visible", isAdmin);
@@ -245,12 +265,27 @@
         isAdmin = false;
       }
 
+      if (forcedRole === "worker") {
+        isAdmin = false;
+      }
+
       applyRoleUI();
+
       if (isAdmin) {
         await loadWorkers();
-        switchTab("create", document.getElementById("btn-create"));
+        const targetTab = (forcedTab === "monitoring" || forcedTab === "rejected") ? forcedTab : "create";
+        const btnMap = {
+          "create": document.getElementById("btn-create"),
+          "monitoring": document.getElementById("btn-monitoring"),
+          "rejected": document.getElementById("btn-rejected")
+        };
+        switchTab(targetTab, btnMap[targetTab]);
       } else {
-        switchTab("my-tasks", document.getElementById("btn-my-tasks"));
+        const targetTab = (forcedTab === "rejected") ? "rejected" : "my-tasks";
+        const btnEl = targetTab === "rejected"
+          ? document.getElementById("btn-rejected")
+          : document.getElementById("btn-my-tasks");
+        switchTab(targetTab, btnEl);
       }
     }
 
@@ -274,7 +309,7 @@
       const list = await res.json();
       const box = document.getElementById("workers-list");
       if (!list.length) {
-        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali ishchilar ro‘yxatdan o‘tmagan. Ishchilar botga kirib /start bosishi kerak.</div>`;
+        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali xodimlar ro‘yxatdan o‘tmagan. Xodimlar botga kirib /start bosishi kerak.</div>`;
         return;
       }
       box.innerHTML = list.map(w => `
@@ -302,11 +337,13 @@
       const instruction = document.getElementById("t-instr").value.trim();
       const deadline = document.getElementById("t-deadline").value.trim();
       const answerType = document.getElementById("t-type").value;
+      const alertInterval = document.getElementById("t-alert").value;
       const callMsg = document.getElementById("t-call").value.trim();
+      const sampleInput = document.getElementById("t-sample");
       const fileInput = document.getElementById("t-file");
 
       if (!title || !description || !deadline || !selected.length) {
-        notify("Sarlavha, mazmun, muddat va kamida 1 ta ishchini tanlang!");
+        notify("Sarlavha, mazmun, muddat va kamida 1 ta xodimni tanlang!");
         return;
       }
 
@@ -317,8 +354,13 @@
       fd.append("instruction", instruction);
       fd.append("deadline", deadline);
       fd.append("answer_type", answerType);
+      fd.append("alert_interval", alertInterval);
       fd.append("call_message", callMsg);
       fd.append("user_ids_csv", selected.join(","));
+
+      if (sampleInput.files && sampleInput.files[0]) {
+        fd.append("sample_photo", sampleInput.files[0]);
+      }
       if (fileInput.files && fileInput.files[0]) {
         fd.append("task_file", fileInput.files[0]);
       }
@@ -326,15 +368,22 @@
       const res = await fetch("/api/tasks", { method: "POST", body: fd });
       const out = await res.json();
       if (out.ok) {
-        notify("✅ Topshiriq tanlangan ishchilarga yuborildi!");
+        notify("✅ Topshiriq tanlangan xodimlarga yuborildi!");
         document.getElementById("t-title").value = "";
         document.getElementById("t-desc").value = "";
         document.getElementById("t-instr").value = "";
         document.getElementById("t-call").value = "";
+        sampleInput.value = "";
         fileInput.value = "";
       } else {
         notify(out.detail || "Xatolik yuz berdi.");
       }
+    }
+
+    function intervalText(code) {
+      if (code === "1h") return "Har 1 soatda";
+      if (code === "2h") return "Har 2 soatda";
+      return "Har 10 daqiqada";
     }
 
     async function loadMonitoring() {
@@ -352,6 +401,10 @@
           ? `<span class="pill pill-bad">Rad etildi</span>`
           : `<span class="pill pill-warn">Bajarmadi</span>`;
 
+        const sampleHtml = r.has_sample_photo
+          ? `<div style="margin-top:4px;"><a class="file-link" href="/api/files/sample/${r.task_id}" target="_blank">🖼 Namuna rasm: ${r.sample_photo_name || "rasm.jpg"}</a></div>`
+          : "";
+
         const taskFileHtml = r.has_task_file && r.task_file_name
           ? `<div style="margin-top:4px;"><a class="file-link" href="/api/files/task/${r.task_id}" target="_blank">📎 Topshiriq fayli: ${r.task_file_name}</a></div>`
           : "";
@@ -368,7 +421,10 @@
             </div>
             <div style="font-size:12px; color:var(--accent); margin-top:5px;"><b>Topshiriq:</b> ${r.title}</div>
             <div style="font-size:12px; margin-top:3px;"><b>Topshiriq matni:</b> ${r.description || "—"}</div>
+            ${r.instruction ? `<div style="font-size:12px; color:#cbd5e1; margin-top:3px;"><b>Izoh:</b> ${r.instruction}</div>` : ""}
+            <div style="font-size:11px; color:var(--muted); margin-top:3px;"><b>Ogohlantirish:</b> ${intervalText(r.alert_interval)}</div>
             ${r.answer_text ? `<div style="font-size:12px; color:#cbd5e1; margin-top:3px;"><b>Javob matni:</b> ${r.answer_text}</div>` : ""}
+            ${sampleHtml}
             ${taskFileHtml}
             ${answerFileHtml}
             <div style="font-size:11px; color:var(--muted); margin-top:5px;">
@@ -394,10 +450,16 @@
             <span class="pill ${t.status === 'rejected' ? 'pill-bad' : (t.status === 'approved' || t.status === 'submitted' ? 'pill-ok' : 'pill-warn')}">${t.status}</span>
           </div>
           <div style="font-size:12px; margin-top:5px;">${t.description}</div>
-          ${t.instruction ? `<div style="font-size:11px; color:var(--muted); margin-top:4px;">Yo‘riqnoma: ${t.instruction}</div>` : ""}
+          ${t.instruction ? `<div style="font-size:12px; color:#cbd5e1; margin-top:4px;"><b>Izoh:</b> ${t.instruction}</div>` : ""}
           <div style="font-size:11px; color:var(--accent); margin-top:4px;">Muddat: ${t.deadline} | Format: ${t.answer_type}</div>
+          ${t.has_sample_photo ? `
+            <div class="sample-box">
+              <div style="font-size:11px; color:var(--accent); font-weight:700;">🖼 Namuna rasm (shu ko‘rinishda bo‘lsin):</div>
+              <img src="/api/files/sample/${t.task_id}" alt="Namuna rasm" />
+            </div>
+          ` : ""}
           ${t.has_task_file && t.task_file_name ? `
-            <div style="margin-top:5px;">
+            <div style="margin-top:6px;">
               <a class="file-link" href="/api/files/task/${t.task_id}" target="_blank">📎 Biriktirilgan faylni yuklash (${t.task_file_name})</a>
             </div>
           ` : ""}
