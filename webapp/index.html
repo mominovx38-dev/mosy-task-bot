@@ -92,11 +92,22 @@
       background: rgba(0, 210, 255, 0.08); border: 1px solid rgba(0, 210, 255, 0.22);
     }
     .sample-box img { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
+    .invite-link-box {
+      margin-top: 8px; padding: 8px 10px; border-radius: 10px;
+      background: #091326; border: 1px solid rgba(0, 210, 255, 0.3);
+      font-size: 12px; color: var(--accent); word-break: break-all;
+    }
 
     body:not(.admin-active) #sec-create,
     body:not(.admin-active) #sec-monitoring,
+    body:not(.admin-active) #sec-invites,
     body:not(.admin-active) #btn-create,
-    body:not(.admin-active) #btn-monitoring {
+    body:not(.admin-active) #btn-monitoring,
+    body:not(.admin-active) #btn-invites {
+      display: none !important;
+    }
+
+    body:not(.worker-allowed) .bottom-nav {
       display: none !important;
     }
   </style>
@@ -107,6 +118,16 @@
     <div>
       <div class="header-title">YOSHLAR ISHLARI AGENTLIGI</div>
       <div class="header-sub" id="role-subtitle">MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI</div>
+    </div>
+  </div>
+
+  <!-- RUXSATSIZ KIRISH -->
+  <div id="sec-denied" class="section">
+    <div class="card">
+      <strong style="font-size:14px; color:#f87171; display:block; margin-bottom:6px;">🔒 Kirish cheklangan</strong>
+      <div style="font-size:12px; color:var(--muted);">
+        Ishchi oynasiga kirish uchun admin yuborgan maxsus taklif havolasi orqali kiring.
+      </div>
     </div>
   </div>
 
@@ -159,6 +180,24 @@
     </div>
   </div>
 
+  <!-- ADMIN: XODIMGA TAKLIF HAVOLASI YARATISH -->
+  <div id="sec-invites" class="section">
+    <div class="card">
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">🔗 Ishchiga havola yaratish</strong>
+      <label>Xodim ism-familiyasi</label>
+      <input id="inv-name" placeholder="Masalan: Azizbek Karimov" />
+      <label>MFY nomi</label>
+      <input id="inv-mfy" placeholder="Masalan: Yangiqo‘rg‘on MFY" />
+      <button class="btn" type="button" onclick="createInvite()">🔗 Havola yaratish</button>
+      <div id="inv-result"></div>
+    </div>
+
+    <div class="card">
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Yaratilgan havolalar</strong>
+      <div id="inv-list">Yuklanmoqda...</div>
+    </div>
+  </div>
+
   <!-- ADMIN: MONITORING JADVALI -->
   <div id="sec-monitoring" class="section">
     <div class="card">
@@ -190,13 +229,16 @@
     <button id="btn-create" class="nav-btn" type="button" onclick="switchTab('create', this)">
       <span class="ico">➕</span><span>Berish</span>
     </button>
+    <button id="btn-invites" class="nav-btn" type="button" onclick="switchTab('invites', this)">
+      <span class="ico">🔗</span><span>Havola</span>
+    </button>
     <button id="btn-monitoring" class="nav-btn" type="button" onclick="switchTab('monitoring', this)">
       <span class="ico">📊</span><span>Monitoring</span>
     </button>
-    <button id="btn-my-tasks" class="nav-btn visible" type="button" onclick="switchTab('my-tasks', this)">
+    <button id="btn-my-tasks" class="nav-btn" type="button" onclick="switchTab('my-tasks', this)">
       <span class="ico">📋</span><span>Topshiriq</span>
     </button>
-    <button id="btn-rejected" class="nav-btn visible" type="button" onclick="switchTab('rejected', this)">
+    <button id="btn-rejected" class="nav-btn" type="button" onclick="switchTab('rejected', this)">
       <span class="ico">♻️</span><span>Rad etilgan</span>
     </button>
   </div>
@@ -210,67 +252,77 @@
     }
 
     const urlParams = new URLSearchParams(window.location.search);
-    const roleParam = (urlParams.get("role") || "").toLowerCase();
+    const roleParam = (urlParams.get("role") || "worker").toLowerCase();
     const tabParam = (urlParams.get("tab") || "").toLowerCase();
     const userIdParam = Number(urlParams.get("user_id") || 0);
+    const invParam = (urlParams.get("inv") || "").trim();
 
     let tgUserId = userIdParam || Number(tg?.initDataUnsafe?.user?.id || 0) || 0;
-    let isAdmin = (roleParam === "admin") && (tgUserId === ADMIN_ID_CONST);
+    let isAdmin = false;
+    let workerAllowed = false;
 
     function notify(msg) {
       if (tg && tg.showAlert) tg.showAlert(msg);
       else alert(msg);
     }
 
-    function applyRoleState() {
+    async function initApp() {
+      try {
+        const res = await fetch(
+          `/api/access?role=${encodeURIComponent(roleParam)}&user_id=${tgUserId}&inv=${encodeURIComponent(invParam)}`,
+          { cache: "no-store" }
+        );
+        const acc = await res.json();
+        if (acc.role === "admin" && acc.allowed && tgUserId === ADMIN_ID_CONST) {
+          isAdmin = true;
+          workerAllowed = true;
+        } else if (acc.allowed) {
+          isAdmin = false;
+          workerAllowed = true;
+          if (acc.user_id) tgUserId = Number(acc.user_id);
+        } else {
+          isAdmin = false;
+          workerAllowed = false;
+        }
+      } catch (e) {
+        isAdmin = false;
+        workerAllowed = false;
+      }
+
       if (isAdmin) {
         document.body.classList.add("admin-active");
+        document.body.classList.add("worker-allowed");
         document.getElementById("role-subtitle").textContent = `ADMIN PANEL • ID: ${tgUserId}`;
-        document.getElementById("btn-create").classList.add("visible");
-        document.getElementById("btn-monitoring").classList.add("visible");
-      } else {
-        document.body.classList.remove("admin-active");
-        document.getElementById("role-subtitle").textContent = "MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI";
-        document.getElementById("btn-create").classList.remove("visible");
-        document.getElementById("btn-monitoring").classList.remove("visible");
-      }
-    }
-
-    async function initApp() {
-      if (tgUserId) {
-        try {
-          const res = await fetch(`/api/me?user_id=${tgUserId}`, { cache: "no-store" });
-          const data = await res.json();
-          isAdmin = Boolean(data.is_admin) && (roleParam === "admin") && (tgUserId === ADMIN_ID_CONST);
-        } catch (e) {
-          isAdmin = (roleParam === "admin") && (tgUserId === ADMIN_ID_CONST);
-        }
-      } else {
-        isAdmin = false;
-      }
-
-      applyRoleState();
-
-      if (isAdmin) {
+        ["btn-create", "btn-invites", "btn-monitoring", "btn-rejected"].forEach(id => {
+          document.getElementById(id).classList.add("visible");
+        });
         await loadWorkers();
-        const startTab = (tabParam === "monitoring" || tabParam === "rejected") ? tabParam : "create";
-        const btnMap = {
-          "create": document.getElementById("btn-create"),
-          "monitoring": document.getElementById("btn-monitoring"),
-          "rejected": document.getElementById("btn-rejected")
-        };
-        switchTab(startTab, btnMap[startTab]);
-      } else {
+        const startTab = (tabParam === "invites" || tabParam === "monitoring" || tabParam === "rejected")
+          ? tabParam
+          : "create";
+        switchTab(startTab, document.getElementById("btn-" + startTab));
+        return;
+      }
+
+      document.body.classList.remove("admin-active");
+      document.getElementById("role-subtitle").textContent = "MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI";
+
+      if (workerAllowed) {
+        document.body.classList.add("worker-allowed");
+        ["btn-my-tasks", "btn-rejected"].forEach(id => {
+          document.getElementById(id).classList.add("visible");
+        });
         const startTab = (tabParam === "rejected") ? "rejected" : "my-tasks";
-        const btnEl = startTab === "rejected"
-          ? document.getElementById("btn-rejected")
-          : document.getElementById("btn-my-tasks");
-        switchTab(startTab, btnEl);
+        switchTab(startTab, document.getElementById("btn-" + startTab));
+      } else {
+        document.body.classList.remove("worker-allowed");
+        document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+        document.getElementById("sec-denied").classList.add("active");
       }
     }
 
     function switchTab(name, btnEl) {
-      if (!isAdmin && (name === "create" || name === "monitoring")) {
+      if (!isAdmin && (name === "create" || name === "monitoring" || name === "invites")) {
         name = "my-tasks";
         btnEl = document.getElementById("btn-my-tasks");
       }
@@ -279,9 +331,60 @@
       document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
       if (btnEl) btnEl.classList.add("active");
 
+      if (name === "invites") loadInvites();
       if (name === "monitoring") loadMonitoring();
       if (name === "my-tasks") loadMyTasks();
       if (name === "rejected") loadRejected();
+    }
+
+    async function createInvite() {
+      if (!isAdmin) return;
+      const fullName = document.getElementById("inv-name").value.trim();
+      const mfy = document.getElementById("inv-mfy").value.trim();
+      if (!fullName || !mfy) {
+        notify("Xodim ismi va MFY ni kiriting!");
+        return;
+      }
+      const fd = new FormData();
+      fd.append("admin_id", String(ADMIN_ID_CONST));
+      fd.append("full_name", fullName);
+      fd.append("mfy", mfy);
+
+      const res = await fetch("/api/invites", { method: "POST", body: fd });
+      const out = await res.json();
+      if (res.ok && out.ok) {
+        document.getElementById("inv-result").innerHTML = `
+          <div class="invite-link-box">
+            <div><b>${out.full_name}</b> (${out.mfy}) uchun havola:</div>
+            <div style="margin-top:4px;">${out.invite_url}</div>
+          </div>
+        `;
+        document.getElementById("inv-name").value = "";
+        document.getElementById("inv-mfy").value = "";
+        loadInvites();
+      } else {
+        notify(out.detail || "Xatolik yuz berdi.");
+      }
+    }
+
+    async function loadInvites() {
+      if (!isAdmin) return;
+      const res = await fetch("/api/invites", { cache: "no-store" });
+      const rows = await res.json();
+      const box = document.getElementById("inv-list");
+      if (!rows.length) {
+        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali havola yaratilmagan.</div>`;
+        return;
+      }
+      box.innerHTML = rows.map(r => `
+        <div class="worker-item" style="display:block;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <b>${r.full_name} (${r.mfy})</b>
+            <span class="pill ${r.claimed_by ? 'pill-ok' : 'pill-warn'}">${r.claimed_by ? 'Faollashgan' : 'Kutilmoqda'}</span>
+          </div>
+          <div class="invite-link-box">${r.invite_url}</div>
+        </div>
+      `).join("");
     }
 
     async function loadWorkers() {
@@ -415,11 +518,10 @@
 
     async function loadMyTasks() {
       const box = document.getElementById("my-tasks-box");
-      if (!tgUserId) {
-        box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
-        return;
-      }
-      const res = await fetch(`/api/my-tasks?user_id=${tgUserId}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/my-tasks?user_id=${tgUserId}&inv=${encodeURIComponent(invParam)}`,
+        { cache: "no-store" }
+      );
       const list = await res.json();
       if (!list.length) {
         box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
@@ -486,8 +588,10 @@
     }
 
     async function loadRejected() {
-      const q = isAdmin ? "" : (tgUserId ? `?user_id=${tgUserId}` : "");
-      const res = await fetch(`/api/rejections${q}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/rejections?user_id=${tgUserId}&inv=${encodeURIComponent(invParam)}&is_admin=${isAdmin ? "true" : "false"}`,
+        { cache: "no-store" }
+      );
       const items = await res.json();
       const box = document.getElementById("rejected-box");
       if (!items.length) { box.innerHTML = "Rad etilgan topshiriqlar mavjud emas."; return; }

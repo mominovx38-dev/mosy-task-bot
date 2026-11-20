@@ -2,12 +2,13 @@ import asyncio
 import io
 import os
 import re
+import secrets
 from datetime import datetime
 from typing import Optional
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -31,7 +32,7 @@ load_dotenv()
 
 PRIMARY_ADMIN_ID = 7798667020
 ADMIN_IDS = {PRIMARY_ADMIN_ID}
-BUILD_TAG = "v20261120_worker_exact"
+BUILD_TAG = "v20261120_invite_lock"
 
 DEFAULT_BOT_TOKEN = "9053563311:AAEqtJpOU7Mi_tZMox2NDRLnxLUSUyyWLmM"
 BOT_TOKEN = os.getenv("BOT_TOKEN", DEFAULT_BOT_TOKEN).strip() or DEFAULT_BOT_TOKEN
@@ -89,7 +90,9 @@ def admin_reply_kb() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(
                     text="📱 Boshqaruv Paneli",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=admin&user_id={PRIMARY_ADMIN_ID}"),
+                    web_app=WebAppInfo(
+                        url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=admin&user_id={PRIMARY_ADMIN_ID}"
+                    ),
                 )
             ]
         ],
@@ -97,17 +100,21 @@ def admin_reply_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def worker_reply_kb(user_id: int) -> ReplyKeyboardMarkup:
+def worker_reply_kb(user_id: int, token: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
                 KeyboardButton(
                     text="📋 Topshiriq",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=my-tasks&user_id={user_id}"),
+                    web_app=WebAppInfo(
+                        url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=my-tasks&user_id={user_id}&inv={token}"
+                    ),
                 ),
                 KeyboardButton(
                     text="♻️ Rad etilgan",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=rejected&user_id={user_id}"),
+                    web_app=WebAppInfo(
+                        url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=rejected&user_id={user_id}&inv={token}"
+                    ),
                 ),
             ]
         ],
@@ -124,6 +131,18 @@ async def init_db() -> None:
                 full_name TEXT NOT NULL,
                 mfy TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'worker',
+                invite_token TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_invites (
+                token TEXT PRIMARY KEY,
+                full_name TEXT NOT NULL,
+                mfy TEXT NOT NULL,
+                claimed_by INTEGER,
                 created_at TEXT NOT NULL
             )
             """
@@ -183,6 +202,7 @@ async def init_db() -> None:
             """
         )
         for col_sql in [
+            "ALTER TABLE users ADD COLUMN invite_token TEXT",
             "ALTER TABLE tasks ADD COLUMN alert_interval TEXT NOT NULL DEFAULT '10m'",
             "ALTER TABLE tasks ADD COLUMN sample_photo_name TEXT",
             "ALTER TABLE tasks ADD COLUMN sample_photo_path TEXT",
@@ -201,10 +221,16 @@ async def init_db() -> None:
         await db.commit()
 
 
+async def get_bot_username() -> str:
+    me = await bot.get_me()
+    return me.username or "boka_agentlik_topshiriqlari_bot"
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext) -> None:
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject) -> None:
     await state.clear()
     user_id = int(message.from_user.id)
+    start_arg = (command.args or "").strip()
 
     async with aiosqlite.connect(DB_PATH) as db:
         if is_admin_user(user_id):
@@ -226,66 +252,74 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             )
             return
 
-        await db.execute("UPDATE users SET role = 'worker' WHERE user_id = ?", (user_id,))
-        await db.commit()
+        # Agar havola orqali kirgan bo'lsa (start=inv_<token>)
+        if start_arg.startswith("inv_"):
+            token = start_arg[4:].strip()
+            cur = await db.execute(
+                "SELECT token, full_name, mfy, claimed_by FROM worker_invites WHERE token = ?",
+                (token,),
+            )
+            inv = await cur.fetchone()
+            if not inv:
+                await message.answer(
+                    "⛔ Bu taklif havolasi noto‘g‘ri yoki eskirgan. Admin bilan bog‘laning.",
+                    parse_mode="HTML",
+                )
+                return
 
-        cur = await db.execute("SELECT full_name, mfy FROM users WHERE user_id = ?", (user_id,))
+            if inv[3] and int(inv[3]) != user_id:
+                await message.answer(
+                    "⛔ Bu taklif havolasi boshqa xodim tomonidan faollashtirilgan.",
+                    parse_mode="HTML",
+                )
+                return
+
+            full_name = inv[1]
+            mfy = inv[2]
+            await db.execute(
+                "UPDATE worker_invites SET claimed_by = ? WHERE token = ?",
+                (user_id, token),
+            )
+            await db.execute(
+                """
+                INSERT INTO users (user_id, full_name, mfy, role, invite_token, created_at)
+                VALUES (?, ?, ?, 'worker', ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    full_name=excluded.full_name,
+                    mfy=excluded.mfy,
+                    role='worker',
+                    invite_token=excluded.invite_token
+                """,
+                (user_id, full_name, mfy, token, now_str()),
+            )
+            await db.commit()
+
+            await message.answer(
+                f"✅ Xush kelibsiz, <b>{full_name}</b> ({mfy})!\n"
+                "Sizga maxsus ishchi oynasi ochildi.",
+                parse_mode="HTML",
+                reply_markup=worker_reply_kb(user_id, token),
+            )
+            return
+
+        # Havolasiz kirgan foydalanuvchi: avval faollashtirilgan xodimmi tekshiramiz
+        cur = await db.execute(
+            "SELECT full_name, mfy, invite_token FROM users WHERE user_id = ?",
+            (user_id,),
+        )
         row = await cur.fetchone()
-
-    if row:
-        await message.answer(
-            f"👋 Xush kelibsiz, <b>{row[0]}</b> ({row[1]})!",
-            parse_mode="HTML",
-            reply_markup=worker_reply_kb(user_id),
-        )
-    else:
-        await message.answer(
-            "Assalomu alaykum! Ro‘yxatdan o‘tish uchun <b>Ism-familiyangizni</b> kiriting:",
-            parse_mode="HTML",
-        )
-        await state.set_state(RegStates.waiting_name)
-
-
-@router.message(RegStates.waiting_name)
-async def reg_name(message: Message, state: FSMContext) -> None:
-    full_name = (message.text or "").strip()
-    if len(full_name) < 3 or full_name.startswith("/"):
-        await message.answer("Iltimos, to‘liq ism-familiyangizni kiriting:")
-        return
-    await state.update_data(full_name=full_name)
-    await message.answer("Qaysi <b>MFY</b> da faoliyat yuritishingizni yozing:", parse_mode="HTML")
-    await state.set_state(RegStates.waiting_mfy)
-
-
-@router.message(RegStates.waiting_mfy)
-async def reg_mfy(message: Message, state: FSMContext) -> None:
-    mfy = (message.text or "").strip()
-    if len(mfy) < 2 or mfy.startswith("/"):
-        await message.answer("Iltimos, MFY nomini kiriting:")
-        return
-    data = await state.get_data()
-    full_name = data["full_name"]
-    user_id = int(message.from_user.id)
-    role = "admin" if is_admin_user(user_id) else "worker"
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
-            INSERT INTO users (user_id, full_name, mfy, role, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET full_name=excluded.full_name, mfy=excluded.mfy, role=excluded.role
-            """,
-            (user_id, full_name, mfy, role, now_str()),
-        )
-        await db.commit()
-
-    await state.clear()
-    kb = admin_reply_kb() if is_admin_user(user_id) else worker_reply_kb(user_id)
-    await message.answer(
-        f"✅ Ro‘yxatdan o‘tdingiz: <b>{full_name}</b> ({mfy}).",
-        parse_mode="HTML",
-        reply_markup=kb,
-    )
+        if row and row[2]:
+            await message.answer(
+                f"👋 Xush kelibsiz, <b>{row[0]}</b> ({row[1]})!",
+                parse_mode="HTML",
+                reply_markup=worker_reply_kb(user_id, row[2]),
+            )
+        else:
+            await message.answer(
+                "🔒 <b>Kirish cheklangan!</b>\n"
+                "Ishchi oynasiga kirish uchun admin yuborgan <b>maxsus taklif havolasi</b> orqali kiring.",
+                parse_mode="HTML",
+            )
 
 
 @router.callback_query(F.data.startswith("read_task:"))
@@ -690,9 +724,101 @@ async def serve_webapp() -> HTMLResponse:
     )
 
 
-@app.get("/api/me")
-async def api_me(user_id: int = Query(default=0)) -> dict:
-    return {"user_id": user_id, "is_admin": is_admin_user(user_id)}
+@app.post("/api/invites")
+async def api_create_invite(
+    admin_id: int = Form(default=PRIMARY_ADMIN_ID),
+    full_name: str = Form(...),
+    mfy: str = Form(...),
+) -> dict:
+    if not is_admin_user(admin_id):
+        raise HTTPException(status_code=403, detail="Faqat admin havola yarata oladi.")
+
+    clean_name = full_name.strip()
+    clean_mfy = mfy.strip()
+    if len(clean_name) < 2 or len(clean_mfy) < 2:
+        raise HTTPException(status_code=400, detail="Xodim ismi va MFY ni kiriting.")
+
+    token = secrets.token_urlsafe(8)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO worker_invites (token, full_name, mfy, claimed_by, created_at)
+            VALUES (?, ?, ?, NULL, ?)
+            """,
+            (token, clean_name, clean_mfy, now_str()),
+        )
+        await db.commit()
+
+    bot_user = await get_bot_username()
+    invite_url = f"https://t.me/{bot_user}?start=inv_{token}"
+    return {"ok": True, "token": token, "invite_url": invite_url, "full_name": clean_name, "mfy": clean_mfy}
+
+
+@app.get("/api/invites")
+async def api_list_invites() -> list:
+    bot_user = await get_bot_username()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT wi.token, wi.full_name, wi.mfy, wi.claimed_by, wi.created_at, u.full_name AS claimed_name
+            FROM worker_invites wi
+            LEFT JOIN users u ON u.user_id = wi.claimed_by
+            ORDER BY wi.created_at DESC
+            """
+        )
+        rows = await cur.fetchall()
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["invite_url"] = f"https://t.me/{bot_user}?start=inv_{item['token']}"
+            out.append(item)
+        return out
+
+
+@app.get("/api/access")
+async def api_check_access(
+    role: str = Query(default="worker"),
+    user_id: int = Query(default=0),
+    inv: str = Query(default=""),
+) -> dict:
+    if role == "admin" and is_admin_user(user_id):
+        return {"allowed": True, "role": "admin", "user_id": user_id}
+
+    token = (inv or "").strip()
+    async with aiosqlite.connect(DB_PATH) as db:
+        if user_id and user_id != PRIMARY_ADMIN_ID:
+            cur = await db.execute(
+                "SELECT full_name, mfy, invite_token FROM users WHERE user_id = ?",
+                (user_id,),
+            )
+            u_row = await cur.fetchone()
+            if u_row and u_row[2]:
+                if not token or token == u_row[2]:
+                    return {
+                        "allowed": True,
+                        "role": "worker",
+                        "user_id": user_id,
+                        "full_name": u_row[0],
+                        "mfy": u_row[1],
+                    }
+
+        if token:
+            cur = await db.execute(
+                "SELECT token, full_name, mfy, claimed_by FROM worker_invites WHERE token = ?",
+                (token,),
+            )
+            i_row = await cur.fetchone()
+            if i_row:
+                return {
+                    "allowed": True,
+                    "role": "worker",
+                    "user_id": int(i_row[3] or user_id or 0),
+                    "full_name": i_row[1],
+                    "mfy": i_row[2],
+                }
+
+    return {"allowed": False, "role": "worker", "user_id": 0}
 
 
 @app.get("/api/workers")
@@ -984,8 +1110,18 @@ async def api_monitoring() -> list:
 
 
 @app.get("/api/my-tasks")
-async def api_my_tasks(user_id: int = Query(default=0)) -> list:
+async def api_my_tasks(user_id: int = Query(default=0), inv: str = Query(default="")) -> list:
+    uid = int(user_id or 0)
     async with aiosqlite.connect(DB_PATH) as db:
+        if not uid and inv:
+            cur_u = await db.execute("SELECT claimed_by FROM worker_invites WHERE token = ?", (inv.strip(),))
+            r_u = await cur_u.fetchone()
+            if r_u and r_u[0]:
+                uid = int(r_u[0])
+
+        if not uid:
+            return []
+
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """
@@ -997,7 +1133,7 @@ async def api_my_tasks(user_id: int = Query(default=0)) -> list:
             WHERE ta.user_id = ?
             ORDER BY ta.id DESC
             """,
-            (user_id,),
+            (uid,),
         )
         rows = await cur.fetchall()
         result = []
@@ -1010,10 +1146,34 @@ async def api_my_tasks(user_id: int = Query(default=0)) -> list:
 
 
 @app.get("/api/rejections")
-async def api_rejections(user_id: Optional[int] = Query(default=None)) -> list:
+async def api_rejections(
+    user_id: Optional[int] = Query(default=None),
+    inv: str = Query(default=""),
+    is_admin: bool = Query(default=False),
+) -> list:
+    uid = int(user_id or 0)
     async with aiosqlite.connect(DB_PATH) as db:
+        if not uid and inv and not is_admin:
+            cur_u = await db.execute("SELECT claimed_by FROM worker_invites WHERE token = ?", (inv.strip(),))
+            r_u = await cur_u.fetchone()
+            if r_u and r_u[0]:
+                uid = int(r_u[0])
+
         db.row_factory = aiosqlite.Row
-        if user_id and not is_admin_user(user_id):
+        if is_admin and uid == PRIMARY_ADMIN_ID:
+            cur = await db.execute(
+                """
+                SELECT r.id, r.reason, r.rejected_date, r.rejected_at,
+                       t.title AS task_title, u.full_name, u.mfy
+                FROM rejections r
+                JOIN tasks t ON t.id = r.task_id
+                JOIN users u ON u.user_id = r.user_id
+                ORDER BY r.id DESC
+                """
+            )
+        else:
+            if not uid:
+                return []
             cur = await db.execute(
                 """
                 SELECT r.id, r.reason, r.rejected_date, r.rejected_at,
@@ -1024,18 +1184,7 @@ async def api_rejections(user_id: Optional[int] = Query(default=None)) -> list:
                 WHERE r.user_id = ?
                 ORDER BY r.id DESC
                 """,
-                (user_id,),
-            )
-        else:
-            cur = await db.execute(
-                """
-                SELECT r.id, r.reason, r.rejected_date, r.rejected_at,
-                       t.title AS task_title, u.full_name, u.mfy
-                FROM rejections r
-                JOIN tasks t ON t.id = r.task_id
-                JOIN users u ON u.user_id = r.user_id
-                ORDER BY r.id DESC
-                """
+                (uid,),
             )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
