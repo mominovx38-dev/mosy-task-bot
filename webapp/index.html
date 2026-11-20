@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>YOSHLAR ISHLARI AGENTLIGI • MOSY</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #070d19;
+      --card: #0f1b33;
+      --card-2: #152546;
+      --accent: #00d2ff;
+      --accent-2: #3a7bd5;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warn: #f59e0b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: rgba(255, 255, 255, 0.09);
+    }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      margin: 0;
+      padding: 16px 14px 90px 14px;
+      background: radial-gradient(circle at top, #122852 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .badge-ring {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 16px; color: #051024; flex-shrink: 0;
+    }
+    .header-title { font-size: 13px; font-weight: 800; letter-spacing: 0.4px; }
+    .header-sub { font-size: 11px; color: var(--accent); font-weight: 700; margin-top: 2px; }
+    .section { display: none; }
+    .section.active { display: block; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+    input, textarea, select {
+      width: 100%;
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    textarea { min-height: 76px; resize: vertical; }
+    .btn {
+      width: 100%;
+      border: none;
+      border-radius: 13px;
+      padding: 12px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent-2), var(--accent));
+    }
+    .btn-sm { padding: 7px 10px; font-size: 12px; width: auto; border-radius: 10px; }
+    .btn-success { background: var(--success); }
+    .btn-danger { background: var(--danger); }
+    .worker-item {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--card-2); padding: 9px 12px; border-radius: 11px; margin-bottom: 7px;
+    }
+    .worker-item input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+    .pill {
+      display: inline-block; padding: 3px 8px; border-radius: 8px;
+      font-size: 11px; font-weight: 700;
+    }
+    .pill-ok { background: rgba(16,185,129,0.2); color: #34d399; }
+    .pill-bad { background: rgba(239,68,68,0.2); color: #f87171; }
+    .pill-warn { background: rgba(245,158,11,0.2); color: #fbbf24; }
+    .bottom-nav {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: rgba(9, 17, 34, 0.96);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: space-around;
+      padding: 8px 6px; z-index: 99;
+    }
+    .nav-btn {
+      background: none; border: none; color: var(--muted);
+      display: flex; flex-direction: column; align-items: center;
+      font-size: 10px; font-weight: 600; cursor: pointer; gap: 3px;
+    }
+    .nav-btn.active { color: var(--accent); }
+    .nav-btn span.ico { font-size: 18px; }
+    .date-group-title {
+      font-size: 12px; font-weight: 800; color: var(--accent);
+      margin: 12px 0 6px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="badge-ring">MOSY</div>
+    <div>
+      <div class="header-title">YOSHLAR ISHLARI AGENTLIGI</div>
+      <div class="header-sub">MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI</div>
+    </div>
+  </div>
+
+  <!-- ADMIN: TOPSHIRIQ YARATISH -->
+  <div id="sec-create" class="section">
+    <div class="card">
+      <label>Topshiriq sarlavhasi</label>
+      <input id="t-title" placeholder="Masalan: MFY yoshlar ro‘yxatini yangilash" />
+
+      <label>Topshiriq mazmuni</label>
+      <textarea id="t-desc" placeholder="Batafsil vazifa mazmuni..."></textarea>
+
+      <label>Qanday bajarilishi kerak? (Yo‘riqnoma)</label>
+      <textarea id="t-instr" placeholder="Qadam-baqadam bajarish tartibi..."></textarea>
+
+      <label>Muddat (Deadline)</label>
+      <input id="t-deadline" placeholder="Masalan: Bugun 18:00 gacha yoki 2026-11-21 17:00" />
+
+      <label>Javob formati cheklovi</label>
+      <select id="t-type">
+        <option value="photo">Faqat rasm</option>
+        <option value="file">Faqat fayl (Excel / Word / PDF)</option>
+        <option value="both">Rasm va fayl</option>
+        <option value="text">Faqat matn</option>
+      </select>
+
+      <label>10 daqiqada ko‘rmasa qo‘ng‘iroqda o‘qiladigan matn</label>
+      <input id="t-call" placeholder="Masalan: Shoshilinch topshiriq yuborildi, iltimos Telegramni tekshiring!" />
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <label style="margin:0;">Xodimlarni tanlash</label>
+        <button class="btn btn-sm" onclick="toggleSelectAll()">☑️ Hammasini belgilash</button>
+      </div>
+      <div id="workers-list">Yuklanmoqda...</div>
+
+      <button class="btn" style="margin-top:10px;" onclick="sendTask()">🚀 Topshiriqni yuborish</button>
+    </div>
+  </div>
+
+  <!-- MONITORING JADVALI -->
+  <div id="sec-monitoring" class="section">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <strong style="font-size:14px;">📊 Monitoring Jadvali</strong>
+        <a id="excel-link" href="/api/export/excel" target="_blank" class="btn btn-sm btn-success" style="text-decoration:none;">📥 Excel yuklash</a>
+      </div>
+      <div id="monitoring-box">Yuklanmoqda...</div>
+    </div>
+  </div>
+
+  <!-- IJROCHI: TOPSHIRIQLARIM -->
+  <div id="sec-my-tasks" class="section">
+    <div class="card">
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Mening topshiriqlarim</strong>
+      <div id="my-tasks-box">Yuklanmoqda...</div>
+    </div>
+  </div>
+
+  <!-- RAD ETILGAN TOPSHIRIQLAR (KUN BO‘YICHA TARIX) -->
+  <div id="sec-rejected" class="section">
+    <div class="card">
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">♻️ Rad etilgan topshiriqlar (Kunlar kesimida)</strong>
+      <div id="rejected-box">Yuklanmoqda...</div>
+    </div>
+  </div>
+
+  <!-- DOIMIY O‘ZGARMAS PASTKI PANEL -->
+  <div class="bottom-nav" id="bottom-nav">
+    <button class="nav-btn admin-only" onclick="switchTab('create', this)">
+      <span class="ico">➕</span><span>Berish</span>
+    </button>
+    <button class="nav-btn admin-only" onclick="switchTab('monitoring', this)">
+      <span class="ico">📊</span><span>Monitoring</span>
+    </button>
+    <button class="nav-btn worker-only" onclick="switchTab('my-tasks', this)">
+      <span class="ico">📋</span><span>Topshiriq</span>
+    </button>
+    <button class="nav-btn" onclick="switchTab('rejected', this)">
+      <span class="ico">♻️</span><span>Rad etilgan</span>
+    </button>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+
+    const user = tg.initDataUnsafe?.user || { id: 0, first_name: "Foydalanuvchi" };
+    let isAdmin = false;
+
+    async function initApp() {
+      const res = await fetch(`/api/me?user_id=${user.id}`);
+      const data = await res.json();
+      isAdmin = data.is_admin;
+
+      document.querySelectorAll(".admin-only").forEach(el => el.style.display = isAdmin ? "flex" : "none");
+      document.querySelectorAll(".worker-only").forEach(el => el.style.display = !isAdmin ? "flex" : "none");
+
+      if (isAdmin) {
+        await loadWorkers();
+        switchTab("create", document.querySelector(".admin-only"));
+      } else {
+        switchTab("my-tasks", document.querySelector(".worker-only"));
+      }
+    }
+
+    function switchTab(name, btnEl) {
+      document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+      document.getElementById("sec-" + name).classList.add("active");
+      document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
+      if (btnEl) btnEl.classList.add("active");
+
+      if (name === "monitoring") loadMonitoring();
+      if (name === "my-tasks") loadMyTasks();
+      if (name === "rejected") loadRejected();
+    }
+
+    async function loadWorkers() {
+      const res = await fetch("/api/workers");
+      const list = await res.json();
+      const box = document.getElementById("workers-list");
+      if (!list.length) {
+        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali xodimlar ro‘yxatdan o‘tmagan.</div>`;
+        return;
+      }
+      box.innerHTML = list.map(w => `
+        <label class="worker-item" style="margin-bottom:7px;">
+          <span><b>${w.full_name}</b> <small style="color:var(--muted);">(${w.mfy})</small></span>
+          <input type="checkbox" class="w-check" value="${w.user_id}" />
+        </label>
+      `).join("");
+    }
+
+    function toggleSelectAll() {
+      const boxes = [...document.querySelectorAll(".w-check")];
+      const allChecked = boxes.length > 0 && boxes.every(b => b.checked);
+      boxes.forEach(b => b.checked = !allChecked);
+    }
+
+    async function sendTask() {
+      const selected = [...document.querySelectorAll(".w-check:checked")].map(b => Number(b.value));
+      const payload = {
+        admin_id: user.id,
+        title: document.getElementById("t-title").value.trim(),
+        description: document.getElementById("t-desc").value.trim(),
+        instruction: document.getElementById("t-instr").value.trim(),
+        deadline: document.getElementById("t-deadline").value.trim(),
+        answer_type: document.getElementById("t-type").value,
+        call_message: document.getElementById("t-call").value.trim(),
+        user_ids: selected
+      };
+      if (!payload.title || !payload.description || !payload.deadline || !selected.length) {
+        tg.showAlert("Sarlavha, mazmun, muddat va kamida 1 ta xodimni tanlang!");
+        return;
+      }
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const out = await res.json();
+      if (out.ok) {
+        tg.showAlert("✅ Topshiriq yuborildi!");
+        document.getElementById("t-title").value = "";
+        document.getElementById("t-desc").value = "";
+        document.getElementById("t-instr").value = "";
+      }
+    }
+
+    async function loadMonitoring() {
+      const res = await fetch("/api/monitoring");
+      const rows = await res.json();
+      const box = document.getElementById("monitoring-box");
+      if (!rows.length) { box.innerHTML = "Ma’lumot yo‘q."; return; }
+      box.innerHTML = rows.map(r => {
+        const done = ["submitted", "approved"].includes(r.status);
+        const badge = r.status === "approved"
+          ? `<span class="pill pill-ok">Tasdiqlandi</span>`
+          : r.status === "submitted"
+          ? `<span class="pill pill-ok">Bajardi</span>`
+          : r.status === "rejected"
+          ? `<span class="pill pill-bad">Rad etildi</span>`
+          : `<span class="pill pill-warn">Bajarmadi</span>`;
+        return `
+          <div class="worker-item" style="display:block;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <b>${r.full_name} (${r.mfy})</b>
+              ${badge}
+            </div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px;">Topshiriq: ${r.title}</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+              O‘qildi: ${r.read_at || "Hali o‘qilmagan"} | Topshirildi: ${r.submitted_at || "-"}
+            </div>
+            ${r.file_name ? `<div style="font-size:11px; color:var(--accent); margin-top:2px;">📎 Fayl: ${r.file_name}</div>` : ""}
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function loadMyTasks() {
+      const res = await fetch(`/api/my-tasks?user_id=${user.id}`);
+      const list = await res.json();
+      const box = document.getElementById("my-tasks-box");
+      if (!list.length) { box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q."; return; }
+      box.innerHTML = list.map(t => `
+        <div class="worker-item" style="display:block;">
+          <div style="display:flex; justify-content:space-between;">
+            <b>${t.title}</b>
+            <span class="pill ${t.status === 'rejected' ? 'pill-bad' : 'pill-warn'}">${t.status}</span>
+          </div>
+          <div style="font-size:12px; margin-top:5px;">${t.description}</div>
+          ${t.instruction ? `<div style="font-size:11px; color:var(--muted); margin-top:4px;">Yo‘riqnoma: ${t.instruction}</div>` : ""}
+          <div style="font-size:11px; color:var(--accent); margin-top:4px;">Muddat: ${t.deadline} | Format: ${t.answer_type}</div>
+          ${t.status === 'rejected' && t.last_reason ? `
+            <div style="margin-top:6px; padding:8px; border-radius:8px; background:rgba(239,68,68,0.15); font-size:12px; color:#fca5a5;">
+              Sizning bergan topshirigingiz shu sababga ko‘ra rad etildi: <b>${t.last_reason}</b>
+            </div>
+          ` : ""}
+          <div style="font-size:11px; color:var(--muted); margin-top:6px;">
+            Javobni bot chatiga yuboring (topshiriq ID: <b>#${t.id}</b>).
+          </div>
+        </div>
+      `).join("");
+    }
+
+    async function loadRejected() {
+      const q = isAdmin ? "" : `?user_id=${user.id}`;
+      const res = await fetch(`/api/rejections${q}`);
+      const items = await res.json();
+      const box = document.getElementById("rejected-box");
+      if (!items.length) { box.innerHTML = "Rad etilgan topshiriqlar mavjud emas."; return; }
+
+      const grouped = {};
+      for (const item of items) {
+        grouped[item.rejected_date] = grouped[item.rejected_date] || [];
+        grouped[item.rejected_date].push(item);
+      }
+
+      let html = "";
+      for (const [day, list] of Object.entries(grouped)) {
+        html += `<div class="date-group-title">📅 ${day}</div>`;
+        for (const r of list) {
+          html += `
+            <div class="worker-item" style="display:block;">
+              <b>${r.task_title}</b> <small style="color:var(--muted);">(${r.rejected_at})</small>
+              ${isAdmin ? `<div style="font-size:11px; color:var(--accent);">Xodim: ${r.full_name} — ${r.mfy}</div>` : ""}
+              <div style="font-size:12px; color:#fca5a5; margin-top:4px;">Sabab: ${r.reason}</div>
+            </div>
+          `;
+        }
+      }
+      box.innerHTML = html;
+    }
+
+    initApp();
+  </script>
+</body>
+</html>
