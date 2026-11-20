@@ -29,18 +29,18 @@ from openpyxl import Workbook
 
 load_dotenv()
 
-DEFAULT_ADMIN_ID = 7798667020
+PRIMARY_ADMIN_ID = 7798667020
 DEFAULT_BOT_TOKEN = "9053563311:AAEqtJpOU7Mi_tZMox2NDRLnxLUSUyyWLmM"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", DEFAULT_BOT_TOKEN).strip() or DEFAULT_BOT_TOKEN
 
-raw_admins = os.getenv("ADMIN_IDS", str(DEFAULT_ADMIN_ID)).strip()
+raw_admins = os.getenv("ADMIN_IDS", str(PRIMARY_ADMIN_ID)).strip()
 ADMIN_IDS = {
     int(x.strip())
     for x in raw_admins.split(",")
-    if x.strip().isdigit()
+    if x.strip().isdigit() and int(x.strip()) == PRIMARY_ADMIN_ID
 }
-ADMIN_IDS.add(DEFAULT_ADMIN_ID)
+ADMIN_IDS.add(PRIMARY_ADMIN_ID)
 
 DB_PATH = os.getenv("DB_PATH", "mosy_tasks.db").strip()
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mosy-task-bot-1.onrender.com").strip().rstrip("/")
@@ -73,7 +73,7 @@ class AnswerStates(StatesGroup):
 def is_admin_user(user_id: Optional[int]) -> bool:
     if not user_id:
         return False
-    return int(user_id) in ADMIN_IDS
+    return int(user_id) == PRIMARY_ADMIN_ID
 
 
 def now_str() -> str:
@@ -95,7 +95,7 @@ def admin_reply_kb() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(
                     text="📱 Boshqaruv Paneli",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?role=admin&user_id={DEFAULT_ADMIN_ID}"),
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?role=admin&user_id={PRIMARY_ADMIN_ID}"),
                 )
             ]
         ],
@@ -202,6 +202,9 @@ async def init_db() -> None:
                 await db.execute(col_sql)
             except Exception:
                 pass
+
+        # Faqat PRIMARY_ADMIN_ID admin bo'lib tursin, qolganlar worker bo'lsin
+        await db.execute("UPDATE users SET role = 'worker' WHERE user_id != ?", (PRIMARY_ADMIN_ID,))
         await db.commit()
 
 
@@ -220,6 +223,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
                 """,
                 (user_id, message.from_user.full_name or "Admin", "Boshqaruv", now_str()),
             )
+            await db.execute("UPDATE users SET role = 'worker' WHERE user_id != ?", (PRIMARY_ADMIN_ID,))
             await db.commit()
             await message.answer(
                 f"✅ <b>Admin huquqi faollashtirildi!</b> (ID: <code>{user_id}</code>)\n"
@@ -228,6 +232,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
                 reply_markup=admin_reply_kb(),
             )
             return
+
+        await db.execute("UPDATE users SET role = 'worker' WHERE user_id = ?", (user_id,))
+        await db.commit()
 
         cur = await db.execute("SELECT full_name, mfy FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
@@ -466,16 +473,15 @@ async def process_answer(message: Message, state: FSMContext) -> None:
         f"📎 Fayl nomi: <code>{file_name or '—'}</code>"
     )
 
-    for adm_id in ADMIN_IDS:
-        try:
-            if file_type == "photo" and file_id:
-                await bot.send_photo(adm_id, file_id, caption=caption, parse_mode="HTML", reply_markup=admin_kb)
-            elif file_type == "document" and file_id:
-                await bot.send_document(adm_id, file_id, caption=caption, parse_mode="HTML", reply_markup=admin_kb)
-            else:
-                await bot.send_message(adm_id, caption, parse_mode="HTML", reply_markup=admin_kb)
-        except Exception:
-            pass
+    try:
+        if file_type == "photo" and file_id:
+            await bot.send_photo(PRIMARY_ADMIN_ID, file_id, caption=caption, parse_mode="HTML", reply_markup=admin_kb)
+        elif file_type == "document" and file_id:
+            await bot.send_document(PRIMARY_ADMIN_ID, file_id, caption=caption, parse_mode="HTML", reply_markup=admin_kb)
+        else:
+            await bot.send_message(PRIMARY_ADMIN_ID, caption, parse_mode="HTML", reply_markup=admin_kb)
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("approve_ans:"))
@@ -646,15 +652,14 @@ async def monitor_tasks_job() -> None:
                 except Exception:
                     pass
 
-                for adm_id in ADMIN_IDS:
-                    try:
-                        await bot.send_message(
-                            adm_id,
-                            f"⚠️ <b>{interval_label} ogohlantirish:</b> {full_name} ({mfy}) — «{title}» (holat: {status}).",
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
+                try:
+                    await bot.send_message(
+                        PRIMARY_ADMIN_ID,
+                        f"⚠️ <b>{interval_label} ogohlantirish:</b> {full_name} ({mfy}) — «{title}» (holat: {status}).",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
 
 
 app = FastAPI(title="MOSY Topshiriqlar Nazorat Markazi")
@@ -696,7 +701,8 @@ async def api_workers() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT user_id, full_name, mfy FROM users WHERE role != 'admin' ORDER BY full_name ASC"
+            "SELECT user_id, full_name, mfy FROM users WHERE user_id != ? ORDER BY full_name ASC",
+            (PRIMARY_ADMIN_ID,),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
@@ -704,7 +710,7 @@ async def api_workers() -> list:
 
 @app.post("/api/tasks")
 async def api_create_task(
-    admin_id: int = Form(default=DEFAULT_ADMIN_ID),
+    admin_id: int = Form(default=PRIMARY_ADMIN_ID),
     title: str = Form(...),
     description: str = Form(...),
     instruction: str = Form(default=""),
@@ -722,7 +728,11 @@ async def api_create_task(
     if alert_interval not in ALERT_SECONDS_MAP:
         alert_interval = "10m"
 
-    user_ids = [int(x.strip()) for x in user_ids_csv.split(",") if x.strip().isdigit()]
+    user_ids = [
+        int(x.strip())
+        for x in user_ids_csv.split(",")
+        if x.strip().isdigit() and int(x.strip()) != PRIMARY_ADMIN_ID
+    ]
     if not user_ids:
         raise HTTPException(status_code=400, detail="Kamida 1 ta xodim tanlanishi kerak.")
 
@@ -896,20 +906,19 @@ async def api_submit_task_from_panel(
         f"📝 Izoh/Matn: {answer_text.strip() or '—'}\n"
         f"📎 Fayl nomi: <code>{saved_name or '—'}</code>"
     )
-    for adm_id in ADMIN_IDS:
-        try:
-            if saved_path and os.path.exists(saved_path):
-                await bot.send_document(
-                    adm_id,
-                    document=open(saved_path, "rb"),
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=admin_kb,
-                )
-            else:
-                await bot.send_message(adm_id, caption, parse_mode="HTML", reply_markup=admin_kb)
-        except Exception:
-            pass
+    try:
+        if saved_path and os.path.exists(saved_path):
+            await bot.send_document(
+                PRIMARY_ADMIN_ID,
+                document=open(saved_path, "rb"),
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=admin_kb,
+            )
+        else:
+            await bot.send_message(PRIMARY_ADMIN_ID, caption, parse_mode="HTML", reply_markup=admin_kb)
+    except Exception:
+        pass
 
     return {"ok": True, "file_name": saved_name}
 
