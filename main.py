@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 import aiosqlite
+import aiohttp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -24,15 +25,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
 
 load_dotenv()
 
-PRIMARY_ADMIN_ID = 7798667020
+PRIMARY_ADMIN_ID = int(os.getenv("PRIMARY_ADMIN_ID", "9020389495").strip() or "9020389495")
 ADMIN_IDS = {PRIMARY_ADMIN_ID}
-BUILD_TAG = "v20261120_invite_lock"
+BUILD_TAG = "v20261120_admin_9020389495"
 
 DEFAULT_BOT_TOKEN = "9053563311:AAEqtJpOU7Mi_tZMox2NDRLnxLUSUyyWLmM"
 BOT_TOKEN = os.getenv("BOT_TOKEN", DEFAULT_BOT_TOKEN).strip() or DEFAULT_BOT_TOKEN
@@ -41,6 +42,14 @@ DB_PATH = os.getenv("DB_PATH", "mosy_tasks.db").strip()
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mosy-task-bot-1.onrender.com").strip().rstrip("/")
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads").strip()
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Avtomatik ovozli qo'ng'iroq sozlamalari (Twilio)
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+WORKER_CALL_PHONE = os.getenv("WORKER_CALL_PHONE", "").strip()
+VOICE_LANGUAGE = os.getenv("VOICE_LANGUAGE", "ru-RU").strip()
+VOICE_NAME = os.getenv("VOICE_NAME", "Polly.Tatyana").strip()
 
 ALERT_SECONDS_MAP = {
     "10m": 600,
@@ -53,11 +62,6 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-
-
-class RegStates(StatesGroup):
-    waiting_name = State()
-    waiting_mfy = State()
 
 
 class AnswerStates(StatesGroup):
@@ -82,6 +86,42 @@ def today_str() -> str:
 def safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     return cleaned or "file.bin"
+
+
+def escape_xml(text: str) -> str:
+    return (
+        (text or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+async def trigger_auto_voice_call(assignment_id: int, spoken_text: str) -> str:
+    """Belgilangan vaqtda xodim raqamiga avtomatik qo'ng'iroq qiladi va ko'targanda matnni o'qiydi."""
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER and WORKER_CALL_PHONE):
+        return "Qo‘ng‘iroq sozlanmagan (TWILIO_* o‘zgaruvchilari kiritilmagan)."
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls.json"
+    twiml_url = f"{WEBAPP_URL}/api/voice/twiml/{assignment_id}"
+    data = {
+        "To": WORKER_CALL_PHONE,
+        "From": TWILIO_FROM_NUMBER,
+        "Url": twiml_url,
+        "Method": "GET",
+    }
+    try:
+        auth = aiohttp.BasicAuth(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        async with aiohttp.ClientSession(auth=auth) as session:
+            async with session.post(url, data=data, timeout=15) as resp:
+                if resp.status in (200, 201):
+                    return f"Avtomatik qo‘ng‘iroq yuborildi ({WORKER_CALL_PHONE})."
+                body = await resp.text()
+                return f"Qo‘ng‘iroq xatosi (kod: {resp.status}): {body[:120]}"
+    except Exception as exc:
+        return f"Qo‘ng‘iroq xatosi: {exc}"
 
 
 def admin_reply_kb() -> ReplyKeyboardMarkup:
@@ -252,7 +292,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             )
             return
 
-        # Agar havola orqali kirgan bo'lsa (start=inv_<token>)
         if start_arg.startswith("inv_"):
             token = start_arg[4:].strip()
             cur = await db.execute(
@@ -302,7 +341,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             )
             return
 
-        # Havolasiz kirgan foydalanuvchi: avval faollashtirilgan xodimmi tekshiramiz
         cur = await db.execute(
             "SELECT full_name, mfy, invite_token FROM users WHERE user_id = ?",
             (user_id,),
@@ -660,14 +698,19 @@ async def monitor_tasks_job() -> None:
                 )
                 await db.commit()
 
-                spoken = call_msg or f"{full_name}, «{title}» topshirig‘i bo‘yicha {interval_label}lik ogohlantirish!"
+                spoken = (call_msg or "").strip() or (
+                    f"Diqqat! {full_name}, «{title}» topshirig‘i bo‘yicha {interval_label}lik og‘zaki ogohlantirish! Muddat: {deadline}."
+                )
+                call_status_note = await trigger_auto_voice_call(int(a_id), spoken)
+
                 try:
                     await bot.send_message(
                         u_id,
-                        f"⏰ <b>Ogohlantirish ({interval_label} oralig‘ida):</b>\n"
+                        f"📞 <b>AVTOMATIK QO‘NG‘IROQ / OG‘ZAKI OGOHLANTIRISH ({interval_label}):</b>\n"
+                        f"🗣 <i>«{spoken}»</i>\n"
                         f"📌 Topshiriq: <b>{title}</b>\n"
                         f"🕒 Muddat: <b>{deadline}</b>\n"
-                        f"📢 Xabar: <i>{spoken}</i>",
+                        f"📡 {call_status_note}",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(
                             inline_keyboard=[
@@ -681,7 +724,9 @@ async def monitor_tasks_job() -> None:
                 try:
                     await bot.send_message(
                         PRIMARY_ADMIN_ID,
-                        f"⚠️ <b>{interval_label} ogohlantirish:</b> {full_name} ({mfy}) — «{title}» (holat: {status}).",
+                        f"📞 <b>{interval_label} avtomatik qo‘ng‘iroq ogohlantirishi:</b> {full_name} ({mfy}) — «{title}».\n"
+                        f"🗣 O‘qib eshittiriladigan matn: <i>{spoken}</i>\n"
+                        f"📡 {call_status_note}",
                         parse_mode="HTML",
                     )
                 except Exception:
@@ -709,6 +754,42 @@ async def on_startup() -> None:
     except Exception:
         pass
     asyncio.create_task(dp.start_polling(bot, handle_signals=False))
+
+
+@app.api_route("/api/voice/twiml/{assignment_id}", methods=["GET", "POST"])
+async def api_voice_twiml(assignment_id: int) -> Response:
+    """Xodim qo'ng'iroqni ko'targanda admin yozgan ogohlantirish matnini aniq va tiniq o'qib beradi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT t.title, t.deadline, t.call_message, u.full_name
+            FROM task_assignments ta
+            JOIN tasks t ON t.id = ta.task_id
+            JOIN users u ON u.user_id = ta.user_id
+            WHERE ta.id = ?
+            """,
+            (assignment_id,),
+        )
+        row = await cur.fetchone()
+
+    if row:
+        title, deadline, call_msg, full_name = row
+        spoken = (call_msg or "").strip() or (
+            f"Diqqat! {full_name}, sizga «{title}» topshirig‘i bo‘yicha ogohlantirish yuborildi. Muddat: {deadline}."
+        )
+    else:
+        spoken = "Diqqat! Sizga yangi topshiriq bo‘yicha ogohlantirish yuborildi."
+
+    safe_spoken = escape_xml(spoken)
+    twiml_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f'<Say language="{escape_xml(VOICE_LANGUAGE)}" voice="{escape_xml(VOICE_NAME)}">{safe_spoken}</Say>'
+        "<Pause length=\"1\"/>"
+        f'<Say language="{escape_xml(VOICE_LANGUAGE)}" voice="{escape_xml(VOICE_NAME)}">{safe_spoken}</Say>'
+        "</Response>"
+    )
+    return Response(content=twiml_xml, media_type="application/xml")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1099,129 +1180,3 @@ async def api_monitoring() -> list:
             """
         )
         rows = await cur.fetchall()
-        result = []
-        for r in rows:
-            item = dict(r)
-            item["has_answer_file"] = bool(item.get("file_path") and os.path.exists(item["file_path"]))
-            item["has_task_file"] = bool(item.get("task_file_path") and os.path.exists(item["task_file_path"]))
-            item["has_sample_photo"] = bool(item.get("sample_photo_path") and os.path.exists(item["sample_photo_path"]))
-            result.append(item)
-        return result
-
-
-@app.get("/api/my-tasks")
-async def api_my_tasks(user_id: int = Query(default=0), inv: str = Query(default="")) -> list:
-    uid = int(user_id or 0)
-    async with aiosqlite.connect(DB_PATH) as db:
-        if not uid and inv:
-            cur_u = await db.execute("SELECT claimed_by FROM worker_invites WHERE token = ?", (inv.strip(),))
-            r_u = await cur_u.fetchone()
-            if r_u and r_u[0]:
-                uid = int(r_u[0])
-
-        if not uid:
-            return []
-
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            """
-            SELECT ta.id, ta.status, ta.last_reason, ta.file_name, ta.answer_text,
-                   t.id AS task_id, t.title, t.description, t.instruction, t.deadline,
-                   t.answer_type, t.sample_photo_name, t.sample_photo_path, t.task_file_name, t.task_file_path
-            FROM task_assignments ta
-            JOIN tasks t ON t.id = ta.task_id
-            WHERE ta.user_id = ?
-            ORDER BY ta.id DESC
-            """,
-            (uid,),
-        )
-        rows = await cur.fetchall()
-        result = []
-        for r in rows:
-            item = dict(r)
-            item["has_task_file"] = bool(item.get("task_file_path") and os.path.exists(item["task_file_path"]))
-            item["has_sample_photo"] = bool(item.get("sample_photo_path") and os.path.exists(item["sample_photo_path"]))
-            result.append(item)
-        return result
-
-
-@app.get("/api/rejections")
-async def api_rejections(
-    user_id: Optional[int] = Query(default=None),
-    inv: str = Query(default=""),
-    is_admin: bool = Query(default=False),
-) -> list:
-    uid = int(user_id or 0)
-    async with aiosqlite.connect(DB_PATH) as db:
-        if not uid and inv and not is_admin:
-            cur_u = await db.execute("SELECT claimed_by FROM worker_invites WHERE token = ?", (inv.strip(),))
-            r_u = await cur_u.fetchone()
-            if r_u and r_u[0]:
-                uid = int(r_u[0])
-
-        db.row_factory = aiosqlite.Row
-        if is_admin and uid == PRIMARY_ADMIN_ID:
-            cur = await db.execute(
-                """
-                SELECT r.id, r.reason, r.rejected_date, r.rejected_at,
-                       t.title AS task_title, u.full_name, u.mfy
-                FROM rejections r
-                JOIN tasks t ON t.id = r.task_id
-                JOIN users u ON u.user_id = r.user_id
-                ORDER BY r.id DESC
-                """
-            )
-        else:
-            if not uid:
-                return []
-            cur = await db.execute(
-                """
-                SELECT r.id, r.reason, r.rejected_date, r.rejected_at,
-                       t.title AS task_title, u.full_name, u.mfy
-                FROM rejections r
-                JOIN tasks t ON t.id = r.task_id
-                JOIN users u ON u.user_id = r.user_id
-                WHERE r.user_id = ?
-                ORDER BY r.id DESC
-                """,
-                (uid,),
-            )
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
-
-
-@app.get("/api/export/excel")
-async def api_export_excel() -> StreamingResponse:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Monitoring"
-    ws.append([
-        "ID", "Xodim", "MFY", "Topshiriq", "Topshiriq matni", "Izoh",
-        "Ogohlantirish", "Holat", "O‘qilgan vaqt", "Topshirilgan vaqt",
-        "Javob matni", "Fayl nomi"
-    ])
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            """
-            SELECT ta.id, u.full_name, u.mfy, t.title, t.description, t.instruction,
-                   t.alert_interval, ta.status, ta.read_at, ta.submitted_at,
-                   ta.answer_text, ta.file_name
-            FROM task_assignments ta
-            JOIN tasks t ON t.id = ta.task_id
-            JOIN users u ON u.user_id = ta.user_id
-            ORDER BY ta.id DESC
-            """
-        )
-        rows = await cur.fetchall()
-        for r in rows:
-            ws.append(list(r))
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=mosy_monitoring.xlsx"},
-    )
