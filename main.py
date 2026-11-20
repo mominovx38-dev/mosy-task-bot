@@ -31,7 +31,7 @@ load_dotenv()
 
 PRIMARY_ADMIN_ID = 7798667020
 ADMIN_IDS = {PRIMARY_ADMIN_ID}
-BUILD_TAG = "v20261120_final"
+BUILD_TAG = "v20261120_worker_exact"
 
 DEFAULT_BOT_TOKEN = "9053563311:AAEqtJpOU7Mi_tZMox2NDRLnxLUSUyyWLmM"
 BOT_TOKEN = os.getenv("BOT_TOKEN", DEFAULT_BOT_TOKEN).strip() or DEFAULT_BOT_TOKEN
@@ -89,7 +89,7 @@ def admin_reply_kb() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(
                     text="📱 Boshqaruv Paneli",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=admin"),
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=admin&user_id={PRIMARY_ADMIN_ID}"),
                 )
             ]
         ],
@@ -97,17 +97,17 @@ def admin_reply_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def worker_reply_kb() -> ReplyKeyboardMarkup:
+def worker_reply_kb(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
                 KeyboardButton(
-                    text="📋 Yangi topshiriqlar",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=my-tasks"),
+                    text="📋 Topshiriq",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=my-tasks&user_id={user_id}"),
                 ),
                 KeyboardButton(
-                    text="♻️ Rad etilgan topshiriqlar",
-                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=rejected"),
+                    text="♻️ Rad etilgan",
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/?v={BUILD_TAG}&role=worker&tab=rejected&user_id={user_id}"),
                 ),
             ]
         ],
@@ -236,7 +236,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await message.answer(
             f"👋 Xush kelibsiz, <b>{row[0]}</b> ({row[1]})!",
             parse_mode="HTML",
-            reply_markup=worker_reply_kb(),
+            reply_markup=worker_reply_kb(user_id),
         )
     else:
         await message.answer(
@@ -280,7 +280,7 @@ async def reg_mfy(message: Message, state: FSMContext) -> None:
         await db.commit()
 
     await state.clear()
-    kb = admin_reply_kb() if is_admin_user(user_id) else worker_reply_kb()
+    kb = admin_reply_kb() if is_admin_user(user_id) else worker_reply_kb(user_id)
     await message.answer(
         f"✅ Ro‘yxatdan o‘tdingiz: <b>{full_name}</b> ({mfy}).",
         parse_mode="HTML",

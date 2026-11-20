@@ -93,24 +93,20 @@
     }
     .sample-box img { max-width: 100%; border-radius: 8px; margin-top: 6px; display: block; }
 
-    body.worker-mode #sec-create,
-    body.worker-mode #sec-monitoring,
-    body.worker-mode #btn-create,
-    body.worker-mode #btn-monitoring {
-      display: none !important;
-    }
-    body.admin-mode #sec-my-tasks,
-    body.admin-mode #btn-my-tasks {
+    body:not(.admin-active) #sec-create,
+    body:not(.admin-active) #sec-monitoring,
+    body:not(.admin-active) #btn-create,
+    body:not(.admin-active) #btn-monitoring {
       display: none !important;
     }
   </style>
 </head>
-<body class="worker-mode">
+<body>
   <div class="header">
     <div class="badge-ring">MOSY</div>
     <div>
       <div class="header-title">YOSHLAR ISHLARI AGENTLIGI</div>
-      <div class="header-sub" id="role-subtitle">Yuklanmoqda...</div>
+      <div class="header-sub" id="role-subtitle">MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI</div>
     </div>
   </div>
 
@@ -174,15 +170,15 @@
     </div>
   </div>
 
-  <!-- WORKER: YANGI TOPSHIRIQLAR -->
+  <!-- XODIM: MENING TOPSHIRIQLARIM -->
   <div id="sec-my-tasks" class="section">
     <div class="card">
-      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Yangi topshiriqlar</strong>
-      <div id="my-tasks-box">Yuklanmoqda...</div>
+      <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Mening topshiriqlarim</strong>
+      <div id="my-tasks-box">Sizga biriktirilgan topshiriqlar yo‘q.</div>
     </div>
   </div>
 
-  <!-- RAD ETILGAN TOPSHIRIQLAR -->
+  <!-- RAD ETILGAN -->
   <div id="sec-rejected" class="section">
     <div class="card">
       <strong style="font-size:14px; display:block; margin-bottom:10px;">♻️ Rad etilgan topshiriqlar</strong>
@@ -197,17 +193,15 @@
     <button id="btn-monitoring" class="nav-btn" type="button" onclick="switchTab('monitoring', this)">
       <span class="ico">📊</span><span>Monitoring</span>
     </button>
-    <button id="btn-my-tasks" class="nav-btn" type="button" onclick="switchTab('my-tasks', this)">
-      <span class="ico">📋</span><span>Yangi topshiriqlar</span>
+    <button id="btn-my-tasks" class="nav-btn visible" type="button" onclick="switchTab('my-tasks', this)">
+      <span class="ico">📋</span><span>Topshiriq</span>
     </button>
     <button id="btn-rejected" class="nav-btn visible" type="button" onclick="switchTab('rejected', this)">
-      <span class="ico">♻️</span><span>Rad etilgan topshiriqlar</span>
+      <span class="ico">♻️</span><span>Rad etilgan</span>
     </button>
   </div>
 
   <script>
-    try { localStorage.clear(); } catch (e) {}
-
     const ADMIN_ID_CONST = 7798667020;
     const tg = window.Telegram?.WebApp;
     if (tg) {
@@ -216,71 +210,50 @@
     }
 
     const urlParams = new URLSearchParams(window.location.search);
-    const forcedRole = (urlParams.get("role") || "").toLowerCase();
-    const forcedTab = urlParams.get("tab") || "";
+    const roleParam = (urlParams.get("role") || "").toLowerCase();
+    const tabParam = (urlParams.get("tab") || "").toLowerCase();
+    const userIdParam = Number(urlParams.get("user_id") || 0);
 
-    function getRealTelegramId() {
-      const fromUnsafe = Number(tg?.initDataUnsafe?.user?.id || 0);
-      if (fromUnsafe) return fromUnsafe;
-
-      if (tg?.initData) {
-        try {
-          const p = new URLSearchParams(tg.initData);
-          const uStr = p.get("user");
-          if (uStr) {
-            const u = JSON.parse(uStr);
-            if (u?.id) return Number(u.id);
-          }
-        } catch (e) {}
-      }
-      return 0;
-    }
-
-    let tgUserId = getRealTelegramId();
-    let isAdmin = false;
+    let tgUserId = userIdParam || Number(tg?.initDataUnsafe?.user?.id || 0) || 0;
+    let isAdmin = (roleParam === "admin") && (tgUserId === ADMIN_ID_CONST);
 
     function notify(msg) {
       if (tg && tg.showAlert) tg.showAlert(msg);
       else alert(msg);
     }
 
-    function applyMode() {
+    function applyRoleState() {
       if (isAdmin) {
-        document.body.classList.remove("worker-mode");
-        document.body.classList.add("admin-mode");
-        document.getElementById("role-subtitle").textContent = `ADMIN • ID: ${tgUserId}`;
+        document.body.classList.add("admin-active");
+        document.getElementById("role-subtitle").textContent = `ADMIN PANEL • ID: ${tgUserId}`;
         document.getElementById("btn-create").classList.add("visible");
         document.getElementById("btn-monitoring").classList.add("visible");
-        document.getElementById("btn-my-tasks").classList.remove("visible");
       } else {
-        document.body.classList.remove("admin-mode");
-        document.body.classList.add("worker-mode");
-        document.getElementById("role-subtitle").textContent = `XODIM • ID: ${tgUserId || "noma'lum"}`;
+        document.body.classList.remove("admin-active");
+        document.getElementById("role-subtitle").textContent = "MOSY • NAZORAT VA TOPSHIRIQLAR MARKAZI";
         document.getElementById("btn-create").classList.remove("visible");
         document.getElementById("btn-monitoring").classList.remove("visible");
-        document.getElementById("btn-my-tasks").classList.add("visible");
       }
     }
 
     async function initApp() {
-      tgUserId = getRealTelegramId();
-      isAdmin = (tgUserId === ADMIN_ID_CONST) && (forcedRole !== "worker");
-
-      if (tgUserId && !isAdmin) {
+      if (tgUserId) {
         try {
           const res = await fetch(`/api/me?user_id=${tgUserId}`, { cache: "no-store" });
           const data = await res.json();
-          isAdmin = Boolean(data.is_admin) && (tgUserId === ADMIN_ID_CONST) && (forcedRole !== "worker");
+          isAdmin = Boolean(data.is_admin) && (roleParam === "admin") && (tgUserId === ADMIN_ID_CONST);
         } catch (e) {
-          isAdmin = false;
+          isAdmin = (roleParam === "admin") && (tgUserId === ADMIN_ID_CONST);
         }
+      } else {
+        isAdmin = false;
       }
 
-      applyMode();
+      applyRoleState();
 
       if (isAdmin) {
         await loadWorkers();
-        const startTab = (forcedTab === "monitoring" || forcedTab === "rejected") ? forcedTab : "create";
+        const startTab = (tabParam === "monitoring" || tabParam === "rejected") ? tabParam : "create";
         const btnMap = {
           "create": document.getElementById("btn-create"),
           "monitoring": document.getElementById("btn-monitoring"),
@@ -288,7 +261,7 @@
         };
         switchTab(startTab, btnMap[startTab]);
       } else {
-        const startTab = (forcedTab === "rejected") ? "rejected" : "my-tasks";
+        const startTab = (tabParam === "rejected") ? "rejected" : "my-tasks";
         const btnEl = startTab === "rejected"
           ? document.getElementById("btn-rejected")
           : document.getElementById("btn-my-tasks");
@@ -441,11 +414,15 @@
     }
 
     async function loadMyTasks() {
+      const box = document.getElementById("my-tasks-box");
+      if (!tgUserId) {
+        box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
+        return;
+      }
       const res = await fetch(`/api/my-tasks?user_id=${tgUserId}`, { cache: "no-store" });
       const list = await res.json();
-      const box = document.getElementById("my-tasks-box");
       if (!list.length) {
-        box.innerHTML = "Sizga biriktirilgan yangi topshiriqlar yo‘q.";
+        box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
         return;
       }
       box.innerHTML = list.map(t => `
@@ -509,7 +486,7 @@
     }
 
     async function loadRejected() {
-      const q = isAdmin ? "" : `?user_id=${tgUserId}`;
+      const q = isAdmin ? "" : (tgUserId ? `?user_id=${tgUserId}` : "");
       const res = await fetch(`/api/rejections${q}`, { cache: "no-store" });
       const items = await res.json();
       const box = document.getElementById("rejected-box");
