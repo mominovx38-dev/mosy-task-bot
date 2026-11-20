@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -20,12 +21,11 @@ from aiogram.types import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
-from pydantic import BaseModel
 
 load_dotenv()
 
@@ -44,6 +44,8 @@ ADMIN_IDS.add(DEFAULT_ADMIN_ID)
 
 DB_PATH = os.getenv("DB_PATH", "mosy_tasks.db").strip()
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mosy-task-bot-1.onrender.com").strip().rstrip("/")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads").strip()
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -63,7 +65,7 @@ class AnswerStates(StatesGroup):
 
 
 def is_admin_user(user_id: Optional[int]) -> bool:
-    if user_id is None:
+    if not user_id:
         return False
     return int(user_id) in ADMIN_IDS
 
@@ -74,6 +76,11 @@ def now_str() -> str:
 
 def today_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def safe_filename(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    return cleaned or "file.bin"
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -113,6 +120,8 @@ async def init_db() -> None:
                 deadline TEXT NOT NULL,
                 answer_type TEXT NOT NULL DEFAULT 'photo',
                 call_message TEXT DEFAULT '',
+                task_file_name TEXT,
+                task_file_path TEXT,
                 created_at TEXT NOT NULL
             )
             """
@@ -131,6 +140,7 @@ async def init_db() -> None:
                 answer_text TEXT,
                 file_id TEXT,
                 file_name TEXT,
+                file_path TEXT,
                 file_type TEXT,
                 last_reason TEXT,
                 FOREIGN KEY (task_id) REFERENCES tasks(id),
@@ -151,6 +161,16 @@ async def init_db() -> None:
             )
             """
         )
+        # Mavjud jadvalga yangi ustunlar bo'lmasa xavfsiz qo'shish
+        for col_sql in [
+            "ALTER TABLE tasks ADD COLUMN task_file_name TEXT",
+            "ALTER TABLE tasks ADD COLUMN task_file_path TEXT",
+            "ALTER TABLE task_assignments ADD COLUMN file_path TEXT",
+        ]:
+            try:
+                await db.execute(col_sql)
+            except Exception:
+                pass
         await db.commit()
 
 
@@ -184,7 +204,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if row:
         await message.answer(
             f"👋 Xush kelibsiz, <b>{row[0]}</b> ({row[1]})!\n"
-            "Vazifalarni ko‘rish va javob yuborish uchun pastdagi <b>📱 Boshqaruv Paneli</b> tugmasini bosing.",
+            "Vazifalarni ko‘rish va javob yuklash uchun pastdagi <b>📱 Boshqaruv Paneli</b> tugmasini bosing.",
             parse_mode="HTML",
             reply_markup=main_reply_kb(),
         )
@@ -275,7 +295,7 @@ async def cb_read_task(callback: CallbackQuery) -> None:
         f"🛠 <b>Bajarish tartibi:</b> {row[5] or 'Ko‘rsatilmagan'}\n"
         f"⏰ <b>Muddat:</b> {row[6]}\n"
         f"📎 <b>Talab etiladigan format:</b> {type_labels.get(row[7], row[7])}\n\n"
-        "Javob yuborish uchun quyidagi <b>✍️ Javob yuborish</b> tugmasini bosing.",
+        "Javobni <b>📱 Boshqaruv Paneli</b> ichida yoki quyidagi tugma orqali yuboring.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -341,21 +361,29 @@ async def process_answer(message: Message, state: FSMContext) -> None:
             return
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
-        mfy_clean = row[5].replace(" ", "_")
+        mfy_clean = safe_filename(row[5])
         file_id = None
         file_name = None
+        file_path = None
         file_type = None
         answer_text = message.caption or message.text or ""
 
         if has_photo:
-            file_id = message.photo[-1].file_id
+            ph = message.photo[-1]
+            file_id = ph.file_id
             file_name = f"{mfy_clean}_{stamp}.jpg"
+            file_path = os.path.join(UPLOAD_DIR, f"ans_{assignment_id}_{file_name}")
+            tg_file = await bot.get_file(file_id)
+            await bot.download_file(tg_file.file_path, destination=file_path)
             file_type = "photo"
         elif has_doc:
             file_id = message.document.file_id
             orig_name = message.document.file_name or "fayl"
             ext = os.path.splitext(orig_name)[1]
             file_name = f"{mfy_clean}_{stamp}{ext}"
+            file_path = os.path.join(UPLOAD_DIR, f"ans_{assignment_id}_{safe_filename(file_name)}")
+            tg_file = await bot.get_file(file_id)
+            await bot.download_file(tg_file.file_path, destination=file_path)
             file_type = "document"
         else:
             file_type = "text"
@@ -364,10 +392,10 @@ async def process_answer(message: Message, state: FSMContext) -> None:
         await db.execute(
             """
             UPDATE task_assignments
-            SET status='submitted', submitted_at=?, answer_text=?, file_id=?, file_name=?, file_type=?
+            SET status='submitted', submitted_at=?, answer_text=?, file_id=?, file_name=?, file_path=?, file_type=?
             WHERE id=?
             """,
-            (submitted, answer_text, file_id, file_name, file_type, assignment_id),
+            (submitted, answer_text, file_id, file_name, file_path, file_type, assignment_id),
         )
         await db.commit()
 
@@ -400,13 +428,7 @@ async def process_answer(message: Message, state: FSMContext) -> None:
             if file_type == "photo" and file_id:
                 await bot.send_photo(adm_id, file_id, caption=caption, parse_mode="HTML", reply_markup=admin_kb)
             elif file_type == "document" and file_id:
-                await bot.send_document(
-                    adm_id,
-                    file_id,
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=admin_kb,
-                )
+                await bot.send_document(adm_id, file_id, caption=caption, parse_mode="HTML", reply_markup=admin_kb)
             else:
                 await bot.send_message(adm_id, caption, parse_mode="HTML", reply_markup=admin_kb)
         except Exception:
@@ -615,17 +637,6 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="webapp"), name="static")
 
 
-class CreateTaskPayload(BaseModel):
-    admin_id: Optional[int] = DEFAULT_ADMIN_ID
-    title: str
-    description: str
-    instruction: Optional[str] = ""
-    deadline: str
-    answer_type: str = "photo"
-    call_message: Optional[str] = ""
-    user_ids: List[int]
-
-
 @app.on_event("startup")
 async def on_startup() -> None:
     await init_db()
@@ -646,7 +657,7 @@ async def serve_webapp() -> HTMLResponse:
 
 
 @app.get("/api/me")
-async def api_me(user_id: int = Query(default=DEFAULT_ADMIN_ID)) -> dict:
+async def api_me(user_id: int = Query(default=0)) -> dict:
     return {"user_id": user_id, "is_admin": is_admin_user(user_id)}
 
 
@@ -662,30 +673,58 @@ async def api_workers() -> list:
 
 
 @app.post("/api/tasks")
-async def api_create_task(payload: CreateTaskPayload) -> dict:
-    if not payload.user_ids:
+async def api_create_task(
+    admin_id: int = Form(default=DEFAULT_ADMIN_ID),
+    title: str = Form(...),
+    description: str = Form(...),
+    instruction: str = Form(default=""),
+    deadline: str = Form(...),
+    answer_type: str = Form(default="photo"),
+    call_message: str = Form(default=""),
+    user_ids_csv: str = Form(...),
+    task_file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    if not is_admin_user(admin_id):
+        raise HTTPException(status_code=403, detail="Faqat admin topshiriq bera oladi.")
+
+    user_ids = [int(x.strip()) for x in user_ids_csv.split(",") if x.strip().isdigit()]
+    if not user_ids:
         raise HTTPException(status_code=400, detail="Kamida 1 ta xodim tanlanishi kerak.")
 
     stamp = now_str()
+    task_file_name = None
+    task_file_path = None
+
+    if task_file and task_file.filename:
+        fname = safe_filename(task_file.filename)
+        fpath = os.path.join(UPLOAD_DIR, f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{fname}")
+        content = await task_file.read()
+        with open(fpath, "wb") as out_f:
+            out_f.write(content)
+        task_file_name = fname
+        task_file_path = fpath
+
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            INSERT INTO tasks (title, description, instruction, deadline, answer_type, call_message, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (title, description, instruction, deadline, answer_type, call_message, task_file_name, task_file_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                payload.title,
-                payload.description,
-                payload.instruction or "",
-                payload.deadline,
-                payload.answer_type,
-                payload.call_message or "",
+                title,
+                description,
+                instruction or "",
+                deadline,
+                answer_type,
+                call_message or "",
+                task_file_name,
+                task_file_path,
                 stamp,
             ),
         )
         task_id = cur.lastrowid
 
-        for uid in payload.user_ids:
+        for uid in user_ids:
             a_cur = await db.execute(
                 """
                 INSERT INTO task_assignments (task_id, user_id, status, last_reminded_at)
@@ -698,9 +737,9 @@ async def api_create_task(payload: CreateTaskPayload) -> dict:
                 await bot.send_message(
                     uid,
                     f"🆕 <b>Yangi topshiriq biriktirildi!</b>\n"
-                    f"📌 <b>{payload.title}</b>\n"
-                    f"📝 {payload.description}\n"
-                    f"⏰ Muddat: <b>{payload.deadline}</b>",
+                    f"📌 <b>{title}</b>\n"
+                    f"📝 {description}\n"
+                    f"⏰ Muddat: <b>{deadline}</b>",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=[
@@ -721,14 +760,131 @@ async def api_create_task(payload: CreateTaskPayload) -> dict:
     return {"ok": True, "task_id": task_id}
 
 
+@app.post("/api/my-tasks/{assignment_id}/submit")
+async def api_submit_task_from_panel(
+    assignment_id: int,
+    user_id: int = Form(...),
+    answer_text: str = Form(default=""),
+    upload_file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT ta.id, ta.user_id, t.title, t.answer_type, u.full_name, u.mfy
+            FROM task_assignments ta
+            JOIN tasks t ON t.id = ta.task_id
+            JOIN users u ON u.user_id = ta.user_id
+            WHERE ta.id = ? AND ta.user_id = ?
+            """,
+            (assignment_id, user_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Topshiriq biriktiruvi topilmadi.")
+
+        required_type = row[3]
+        has_file = bool(upload_file and upload_file.filename)
+        has_text = bool((answer_text or "").strip())
+
+        if required_type in ("photo", "file", "both") and not has_file:
+            raise HTTPException(status_code=400, detail="Ushbu topshiriq uchun fayl/rasm yuklash majburiy!")
+        if required_type == "text" and not has_text:
+            raise HTTPException(status_code=400, detail="Ushbu topshiriq uchun javob matni yozish majburiy!")
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M")
+        mfy_clean = safe_filename(row[5])
+        saved_name = None
+        saved_path = None
+        saved_type = "text"
+
+        if has_file:
+            orig_name = safe_filename(upload_file.filename)
+            ext = os.path.splitext(orig_name)[1]
+            saved_name = f"{mfy_clean}_{stamp}{ext or '.bin'}"
+            saved_path = os.path.join(UPLOAD_DIR, f"ans_{assignment_id}_{saved_name}")
+            content = await upload_file.read()
+            with open(saved_path, "wb") as f:
+                f.write(content)
+            saved_type = "photo" if ext.lower() in {".jpg", ".jpeg", ".png", ".webp"} else "document"
+
+        submitted = now_str()
+        await db.execute(
+            """
+            UPDATE task_assignments
+            SET status='submitted', submitted_at=?, answer_text=?, file_name=?, file_path=?, file_type=?
+            WHERE id=?
+            """,
+            (submitted, answer_text.strip(), saved_name, saved_path, saved_type, assignment_id),
+        )
+        await db.commit()
+
+    admin_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Qabul qildim", callback_data=f"approve_ans:{assignment_id}"),
+                InlineKeyboardButton(text="❌ Qayta jo‘natish", callback_data=f"reject_ans:{assignment_id}"),
+            ]
+        ]
+    )
+    caption = (
+        f"📥 <b>Panel orqali yangi topshiriq javobi!</b>\n"
+        f"👤 Xodim: <b>{row[4]}</b> ({row[5]})\n"
+        f"📌 Topshiriq: <b>{row[2]}</b>\n"
+        f"🕒 Vaqt: {submitted}\n"
+        f"📝 Izoh/Matn: {answer_text.strip() or '—'}\n"
+        f"📎 Fayl nomi: <code>{saved_name or '—'}</code>"
+    )
+    for adm_id in ADMIN_IDS:
+        try:
+            if saved_path and os.path.exists(saved_path):
+                await bot.send_document(
+                    adm_id,
+                    document=FileResponse(saved_path, filename=saved_name) if False else open(saved_path, "rb"),
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=admin_kb,
+                )
+            else:
+                await bot.send_message(adm_id, caption, parse_mode="HTML", reply_markup=admin_kb)
+        except Exception:
+            pass
+
+    return {"ok": True, "file_name": saved_name}
+
+
+@app.get("/api/files/task/{task_id}")
+async def api_download_task_file(task_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT task_file_name, task_file_path FROM tasks WHERE id = ?", (task_id,))
+        row = await cur.fetchone()
+        if not row or not row[1] or not os.path.exists(row[1]):
+            raise HTTPException(status_code=404, detail="Topshiriq fayli topilmadi.")
+        return FileResponse(path=row[1], filename=row[0] or "task_file")
+
+
+@app.get("/api/files/answer/{assignment_id}")
+async def api_download_answer_file(assignment_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT file_name, file_path FROM task_assignments WHERE id = ?",
+            (assignment_id,),
+        )
+        row = await cur.fetchone()
+        if not row or not row[1] or not os.path.exists(row[1]):
+            raise HTTPException(status_code=404, detail="Yuklangan fayl topilmadi.")
+        return FileResponse(path=row[1], filename=row[0] or "answer_file")
+
+
 @app.get("/api/monitoring")
 async def api_monitoring() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """
-            SELECT ta.id, ta.status, ta.read_at, ta.submitted_at, ta.file_name,
-                   t.title, u.full_name, u.mfy
+            SELECT ta.id, ta.status, ta.read_at, ta.submitted_at, ta.answer_text,
+                   ta.file_name, ta.file_path, ta.last_reason,
+                   t.id AS task_id, t.title, t.description, t.task_file_name, t.task_file_path,
+                   u.full_name, u.mfy
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             JOIN users u ON u.user_id = ta.user_id
@@ -736,7 +892,13 @@ async def api_monitoring() -> list:
             """
         )
         rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            item = dict(r)
+            item["has_answer_file"] = bool(item.get("file_path") and os.path.exists(item["file_path"]))
+            item["has_task_file"] = bool(item.get("task_file_path") and os.path.exists(item["task_file_path"]))
+            result.append(item)
+        return result
 
 
 @app.get("/api/my-tasks")
@@ -745,8 +907,8 @@ async def api_my_tasks(user_id: int = Query(default=0)) -> list:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             """
-            SELECT ta.id, ta.status, ta.last_reason,
-                   t.title, t.description, t.instruction, t.deadline, t.answer_type
+            SELECT ta.id, ta.status, ta.last_reason, ta.file_name, ta.answer_text,
+                   t.id AS task_id, t.title, t.description, t.instruction, t.deadline, t.answer_type, t.task_file_name, t.task_file_path
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             WHERE ta.user_id = ?
@@ -755,7 +917,12 @@ async def api_my_tasks(user_id: int = Query(default=0)) -> list:
             (user_id,),
         )
         rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            item = dict(r)
+            item["has_task_file"] = bool(item.get("task_file_path") and os.path.exists(item["task_file_path"]))
+            result.append(item)
+        return result
 
 
 @app.get("/api/rejections")
@@ -795,12 +962,13 @@ async def api_export_excel() -> StreamingResponse:
     wb = Workbook()
     ws = wb.active
     ws.title = "Monitoring"
-    ws.append(["ID", "Xodim", "MFY", "Topshiriq", "Holat", "O‘qilgan vaqt", "Topshirilgan vaqt", "Fayl nomi"])
+    ws.append(["ID", "Xodim", "MFY", "Topshiriq", "Topshiriq matni", "Holat", "O‘qilgan vaqt", "Topshirilgan vaqt", "Javob matni", "Fayl nomi"])
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT ta.id, u.full_name, u.mfy, t.title, ta.status, ta.read_at, ta.submitted_at, ta.file_name
+            SELECT ta.id, u.full_name, u.mfy, t.title, t.description, ta.status,
+                   ta.read_at, ta.submitted_at, ta.answer_text, ta.file_name
             FROM task_assignments ta
             JOIN tasks t ON t.id = ta.task_id
             JOIN users u ON u.user_id = ta.user_id

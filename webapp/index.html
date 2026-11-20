@@ -56,11 +56,11 @@
       font-size: 14px; font-weight: 700; cursor: pointer; color: #fff;
       background: linear-gradient(135deg, var(--accent-2), var(--accent));
     }
-    .btn-sm { padding: 7px 10px; font-size: 12px; width: auto; border-radius: 10px; }
+    .btn-sm { padding: 7px 10px; font-size: 12px; width: auto; border-radius: 10px; display: inline-block; text-decoration: none; }
     .btn-success { background: var(--success); }
     .worker-item {
       display: flex; align-items: center; justify-content: space-between;
-      background: var(--card-2); padding: 9px 12px; border-radius: 11px; margin-bottom: 7px;
+      background: var(--card-2); padding: 10px 12px; border-radius: 11px; margin-bottom: 8px;
     }
     .worker-item input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
     .pill { display: inline-block; padding: 3px 8px; border-radius: 8px; font-size: 11px; font-weight: 700; }
@@ -85,6 +85,7 @@
       font-size: 12px; font-weight: 800; color: var(--accent);
       margin: 12px 0 6px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border);
     }
+    .file-link { color: var(--accent); font-size: 12px; font-weight: 700; text-decoration: none; }
   </style>
 </head>
 <body>
@@ -92,12 +93,12 @@
     <div class="badge-ring">MOSY</div>
     <div>
       <div class="header-title">YOSHLAR ISHLARI AGENTLIGI</div>
-      <div class="header-sub" id="role-subtitle">ADMIN PANEL • ID: 7798667020</div>
+      <div class="header-sub" id="role-subtitle">Yuklanmoqda...</div>
     </div>
   </div>
 
   <!-- ADMIN: TOPSHIRIQ YARATISH -->
-  <div id="sec-create" class="section active">
+  <div id="sec-create" class="section">
     <div class="card">
       <label>Topshiriq sarlavhasi</label>
       <input id="t-title" placeholder="Masalan: MFY yoshlar ro‘yxatini yangilash" />
@@ -119,6 +120,9 @@
         <option value="text">Faqat matn</option>
       </select>
 
+      <label>Topshiriq uchun ilova fayl (ixtiyoriy)</label>
+      <input id="t-file" type="file" />
+
       <label>10 daqiqada ko‘rmasa qo‘ng‘iroqda o‘qiladigan matn</label>
       <input id="t-call" placeholder="Masalan: Shoshilinch topshiriq yuborildi, iltimos ko‘rib chiqing!" />
 
@@ -132,18 +136,18 @@
     </div>
   </div>
 
-  <!-- MONITORING JADVALI -->
+  <!-- ADMIN: MONITORING JADVALI -->
   <div id="sec-monitoring" class="section">
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <strong style="font-size:14px;">📊 Monitoring Jadvali</strong>
-        <a href="/api/export/excel" target="_blank" class="btn btn-sm btn-success" style="text-decoration:none;">📥 Excel yuklash</a>
+        <a href="/api/export/excel" target="_blank" class="btn btn-sm btn-success">📥 Excel yuklash</a>
       </div>
       <div id="monitoring-box">Yuklanmoqda...</div>
     </div>
   </div>
 
-  <!-- IJROCHI: TOPSHIRIQLARIM -->
+  <!-- ISHCHI: TOPSHIRIQLARIM VA YUKLASH -->
   <div id="sec-my-tasks" class="section">
     <div class="card">
       <strong style="font-size:14px; display:block; margin-bottom:10px;">📋 Mening topshiriqlarim</strong>
@@ -160,10 +164,10 @@
   </div>
 
   <div class="bottom-nav">
-    <button id="btn-create" class="nav-btn admin-only visible active" type="button" onclick="switchTab('create', this)">
+    <button id="btn-create" class="nav-btn admin-only" type="button" onclick="switchTab('create', this)">
       <span class="ico">➕</span><span>Berish</span>
     </button>
-    <button id="btn-monitoring" class="nav-btn admin-only visible" type="button" onclick="switchTab('monitoring', this)">
+    <button id="btn-monitoring" class="nav-btn admin-only" type="button" onclick="switchTab('monitoring', this)">
       <span class="ico">📊</span><span>Monitoring</span>
     </button>
     <button id="btn-my-tasks" class="nav-btn worker-only" type="button" onclick="switchTab('my-tasks', this)">
@@ -186,10 +190,24 @@
     let tgUserId =
       tg?.initDataUnsafe?.user?.id ||
       Number(urlParams.get("user_id") || 0) ||
-      ADMIN_ID_CONST;
+      Number(localStorage.getItem("mosy_worker_id") || 0);
 
-    localStorage.setItem("mosy_tg_user_id", String(tgUserId));
-    let isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
+    if (!tgUserId && tg?.initData) {
+      try {
+        const params = new URLSearchParams(tg.initData);
+        const userStr = params.get("user");
+        if (userStr) {
+          const u = JSON.parse(userStr);
+          if (u?.id) tgUserId = Number(u.id);
+        }
+      } catch (e) {}
+    }
+
+    if (tgUserId) {
+      localStorage.setItem("mosy_worker_id", String(tgUserId));
+    }
+
+    let isAdmin = false;
 
     function notify(msg) {
       if (tg && tg.showAlert) tg.showAlert(msg);
@@ -199,7 +217,7 @@
     function applyRoleUI() {
       document.getElementById("role-subtitle").textContent = isAdmin
         ? `ADMIN PANEL • ID: ${tgUserId}`
-        : `IJROCHI PANEL • ID: ${tgUserId}`;
+        : `ISHCHI PANELI • ID: ${tgUserId || "noma'lum"}`;
 
       document.querySelectorAll(".admin-only").forEach(el => {
         el.classList.toggle("visible", isAdmin);
@@ -210,15 +228,15 @@
     }
 
     async function initApp() {
-      applyRoleUI();
-      try {
-        const res = await fetch(`/api/me?user_id=${tgUserId}`, { cache: "no-store" });
-        const data = await res.json();
-        if (typeof data.is_admin === "boolean") {
-          isAdmin = data.is_admin || (Number(tgUserId) === ADMIN_ID_CONST);
+      isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
+      if (tgUserId) {
+        try {
+          const res = await fetch(`/api/me?user_id=${tgUserId}`, { cache: "no-store" });
+          const data = await res.json();
+          isAdmin = Boolean(data.is_admin);
+        } catch (e) {
+          isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
         }
-      } catch (e) {
-        isAdmin = (Number(tgUserId) === ADMIN_ID_CONST);
       }
 
       applyRoleUI();
@@ -231,6 +249,10 @@
     }
 
     function switchTab(name, btnEl) {
+      if (!isAdmin && (name === "create" || name === "monitoring")) {
+        name = "my-tasks";
+        btnEl = document.getElementById("btn-my-tasks");
+      }
       document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
       document.getElementById("sec-" + name).classList.add("active");
       document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
@@ -246,7 +268,7 @@
       const list = await res.json();
       const box = document.getElementById("workers-list");
       if (!list.length) {
-        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali xodimlar ro‘yxatdan o‘tmagan. Xodimlar botga kirib /start bosishi kerak.</div>`;
+        box.innerHTML = `<div style="color:var(--muted); font-size:12px;">Hali ishchilar ro‘yxatdan o‘tmagan. Ishchilar botga kirib /start bosishi kerak.</div>`;
         return;
       }
       box.innerHTML = list.map(w => `
@@ -265,31 +287,43 @@
 
     async function sendTask() {
       const selected = [...document.querySelectorAll(".w-check:checked")].map(b => Number(b.value));
-      const payload = {
-        admin_id: tgUserId || ADMIN_ID_CONST,
-        title: document.getElementById("t-title").value.trim(),
-        description: document.getElementById("t-desc").value.trim(),
-        instruction: document.getElementById("t-instr").value.trim(),
-        deadline: document.getElementById("t-deadline").value.trim(),
-        answer_type: document.getElementById("t-type").value,
-        call_message: document.getElementById("t-call").value.trim(),
-        user_ids: selected
-      };
-      if (!payload.title || !payload.description || !payload.deadline || !selected.length) {
-        notify("Sarlavha, mazmun, muddat va kamida 1 ta xodimni tanlang!");
+      const title = document.getElementById("t-title").value.trim();
+      const description = document.getElementById("t-desc").value.trim();
+      const instruction = document.getElementById("t-instr").value.trim();
+      const deadline = document.getElementById("t-deadline").value.trim();
+      const answerType = document.getElementById("t-type").value;
+      const callMsg = document.getElementById("t-call").value.trim();
+      const fileInput = document.getElementById("t-file");
+
+      if (!title || !description || !deadline || !selected.length) {
+        notify("Sarlavha, mazmun, muddat va kamida 1 ta ishchini tanlang!");
         return;
       }
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+
+      const fd = new FormData();
+      fd.append("admin_id", String(tgUserId || ADMIN_ID_CONST));
+      fd.append("title", title);
+      fd.append("description", description);
+      fd.append("instruction", instruction);
+      fd.append("deadline", deadline);
+      fd.append("answer_type", answerType);
+      fd.append("call_message", callMsg);
+      fd.append("user_ids_csv", selected.join(","));
+      if (fileInput.files && fileInput.files[0]) {
+        fd.append("task_file", fileInput.files[0]);
+      }
+
+      const res = await fetch("/api/tasks", { method: "POST", body: fd });
       const out = await res.json();
       if (out.ok) {
-        notify("✅ Topshiriq tanlangan xodimlarga yuborildi!");
+        notify("✅ Topshiriq tanlangan ishchilarga yuborildi!");
         document.getElementById("t-title").value = "";
         document.getElementById("t-desc").value = "";
         document.getElementById("t-instr").value = "";
+        document.getElementById("t-call").value = "";
+        fileInput.value = "";
+      } else {
+        notify(out.detail || "Xatolik yuz berdi.");
       }
     }
 
@@ -306,17 +340,29 @@
           : r.status === "rejected"
           ? `<span class="pill pill-bad">Rad etildi</span>`
           : `<span class="pill pill-warn">Bajarmadi</span>`;
+
+        const taskFileHtml = r.has_task_file && r.task_file_name
+          ? `<div style="margin-top:4px;"><a class="file-link" href="/api/files/task/${r.task_id}" target="_blank">📎 Topshiriq fayli: ${r.task_file_name}</a></div>`
+          : "";
+
+        const answerFileHtml = r.has_answer_file && r.file_name
+          ? `<div style="margin-top:4px;"><a class="file-link" href="/api/files/answer/${r.id}" target="_blank">📥 Xodim yuklagan fayl: ${r.file_name}</a></div>`
+          : (r.file_name ? `<div style="font-size:11px; color:var(--accent); margin-top:3px;">📎 Fayl: ${r.file_name}</div>` : "");
+
         return `
           <div class="worker-item" style="display:block;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <b>${r.full_name} (${r.mfy})</b>
               ${badge}
             </div>
-            <div style="font-size:12px; color:var(--muted); margin-top:4px;">Topshiriq: ${r.title}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+            <div style="font-size:12px; color:var(--accent); margin-top:5px;"><b>Topshiriq:</b> ${r.title}</div>
+            <div style="font-size:12px; margin-top:3px;"><b>Topshiriq matni:</b> ${r.description || "—"}</div>
+            ${r.answer_text ? `<div style="font-size:12px; color:#cbd5e1; margin-top:3px;"><b>Javob matni:</b> ${r.answer_text}</div>` : ""}
+            ${taskFileHtml}
+            ${answerFileHtml}
+            <div style="font-size:11px; color:var(--muted); margin-top:5px;">
               O‘qildi: ${r.read_at || "O‘qilmagan"} | Topshirildi: ${r.submitted_at || "-"}
             </div>
-            ${r.file_name ? `<div style="font-size:11px; color:var(--accent); margin-top:2px;">📎 Fayl: ${r.file_name}</div>` : ""}
           </div>
         `;
       }).join("");
@@ -326,26 +372,62 @@
       const res = await fetch(`/api/my-tasks?user_id=${tgUserId}`, { cache: "no-store" });
       const list = await res.json();
       const box = document.getElementById("my-tasks-box");
-      if (!list.length) { box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q."; return; }
+      if (!list.length) {
+        box.innerHTML = "Sizga biriktirilgan topshiriqlar yo‘q.";
+        return;
+      }
       box.innerHTML = list.map(t => `
         <div class="worker-item" style="display:block;">
-          <div style="display:flex; justify-content:space-between;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
             <b>${t.title}</b>
-            <span class="pill ${t.status === 'rejected' ? 'pill-bad' : 'pill-warn'}">${t.status}</span>
+            <span class="pill ${t.status === 'rejected' ? 'pill-bad' : (t.status === 'approved' || t.status === 'submitted' ? 'pill-ok' : 'pill-warn')}">${t.status}</span>
           </div>
           <div style="font-size:12px; margin-top:5px;">${t.description}</div>
           ${t.instruction ? `<div style="font-size:11px; color:var(--muted); margin-top:4px;">Yo‘riqnoma: ${t.instruction}</div>` : ""}
           <div style="font-size:11px; color:var(--accent); margin-top:4px;">Muddat: ${t.deadline} | Format: ${t.answer_type}</div>
+          ${t.has_task_file && t.task_file_name ? `
+            <div style="margin-top:5px;">
+              <a class="file-link" href="/api/files/task/${t.task_id}" target="_blank">📎 Biriktirilgan faylni yuklash (${t.task_file_name})</a>
+            </div>
+          ` : ""}
           ${t.status === 'rejected' && t.last_reason ? `
             <div style="margin-top:6px; padding:8px; border-radius:8px; background:rgba(239,68,68,0.15); font-size:12px; color:#fca5a5;">
               Sizning bergan topshirigingiz shu sababga ko‘ra rad etildi: <b>${t.last_reason}</b>
             </div>
           ` : ""}
-          <div style="font-size:11px; color:var(--muted); margin-top:6px;">
-            Javob yuborish uchun bot chatidagi <b>O‘qish va Javob berish</b> tugmasini bosing (#${t.id}).
+          <div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border);">
+            <label style="font-size:11px;">Javob matni / izoh</label>
+            <input id="ans-txt-${t.id}" value="${(t.answer_text || '').replace(/"/g, '&quot;')}" placeholder="Javob matnini kiriting..." style="margin-bottom:8px;" />
+            <label style="font-size:11px;">Fayl / rasm yuklash</label>
+            <input id="ans-file-${t.id}" type="file" style="margin-bottom:8px;" />
+            ${t.file_name ? `<div style="font-size:11px; color:var(--accent); margin-bottom:6px;">Yuklangan fayl: ${t.file_name}</div>` : ""}
+            <button class="btn btn-sm btn-success" type="button" onclick="submitTaskFromPanel(${t.id})">📤 Javobni yuklash</button>
           </div>
         </div>
       `).join("");
+    }
+
+    async function submitTaskFromPanel(assignmentId) {
+      const txtEl = document.getElementById(`ans-txt-${assignmentId}`);
+      const fileEl = document.getElementById(`ans-file-${assignmentId}`);
+      const fd = new FormData();
+      fd.append("user_id", String(tgUserId));
+      fd.append("answer_text", txtEl ? txtEl.value.trim() : "");
+      if (fileEl && fileEl.files && fileEl.files[0]) {
+        fd.append("upload_file", fileEl.files[0]);
+      }
+
+      const res = await fetch(`/api/my-tasks/${assignmentId}/submit`, {
+        method: "POST",
+        body: fd
+      });
+      const out = await res.json();
+      if (res.ok && out.ok) {
+        notify("✅ Javob va fayl muvaffaqiyatli yuklandi!");
+        loadMyTasks();
+      } else {
+        notify(out.detail || "Javob yuklashda xatolik.");
+      }
     }
 
     async function loadRejected() {
